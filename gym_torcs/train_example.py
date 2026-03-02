@@ -10,6 +10,6 @@ env = TorcsEnv()
 
 model = PPO("MlpPolicy", env, n_steps=4096, verbose=1, max_grad_norm=0.5)
 
-model.learn(total_timesteps=1000)
+model.learn(total_timesteps=100000)
 
 model.save("model")

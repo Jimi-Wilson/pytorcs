@@ -1,18 +1,9 @@
 import copy
 import math
-import os
-
 import gymnasium as gym
 import numpy as np
-from dotenv import load_dotenv
 
 from torcs_client import TorcsClient, launch_torcs
-
-load_dotenv()
-TORCS_PATH = os.getenv("TORCS_PATH")
-TORCS_EXE = os.getenv("TORCS_EXE")
-RACE_CONFIG = os.getenv("RACE_CONFIG")
-
 
 class TorcsEnv(gym.Env):
     # Defining features, their size and scaling factors
