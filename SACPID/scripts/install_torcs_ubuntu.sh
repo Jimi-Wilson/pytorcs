@@ -37,7 +37,10 @@ export CFLAGS="-fPIC"
 export CPPFLAGS="$CFLAGS"
 export CXXFLAGS="$CFLAGS"
 ./configure --prefix=/usr/local
-make -j"$(nproc)"
+# TORCS build has header-export order issues: build single-threaded and run twice
+# so tgfclient.h, osspec.h etc. are exported before dependent dirs compile.
+make -j1 || true
+make -j1
 sudo make install
 sudo make datainstall
 
