@@ -14,9 +14,17 @@ CONDA_PREFIX="${CONDA_PREFIX:-$HOME/miniconda3}"
 ENV_NAME="torcs_env"
 
 # -----------------------------------------------------------------------------
+# STEP 0: System packages for pygame (omnisafe dep)
+# -----------------------------------------------------------------------------
+echo "=== STEP 0/5: System packages for pygame ==="
+sudo apt-get update -qq
+sudo apt-get install -y libsdl2-dev libsdl2-ttf-dev libsdl2-image-dev libsdl2-mixer-dev libportmidi-dev
+echo ""
+
+# -----------------------------------------------------------------------------
 # STEP 1: Install Miniconda (skip if already present)
 # -----------------------------------------------------------------------------
-echo "=== STEP 1/4: Miniconda ==="
+echo "=== STEP 1/5: Miniconda ==="
 if [ -f "$CONDA_PREFIX/bin/conda" ]; then
   echo "Miniconda already at $CONDA_PREFIX, skipping install."
 else
@@ -31,7 +39,7 @@ echo ""
 # -----------------------------------------------------------------------------
 # STEP 2: Init conda for this shell
 # -----------------------------------------------------------------------------
-echo "=== STEP 2/4: Init conda ==="
+echo "=== STEP 2/5: Init conda ==="
 eval "$("$CONDA_PREFIX/bin/conda" shell.bash hook)"
 
 # Accept Anaconda Terms of Service (required for pkgs/main and pkgs/r)
@@ -42,7 +50,7 @@ echo ""
 # -----------------------------------------------------------------------------
 # STEP 3: Create env and install packages
 # -----------------------------------------------------------------------------
-echo "=== STEP 3/4: Create env '$ENV_NAME' and install packages ==="
+echo "=== STEP 3/5: Create env '$ENV_NAME' and install packages ==="
 if conda env list | grep -qw "$ENV_NAME"; then
   echo "Env '$ENV_NAME' exists. Recreate? Run: conda env remove -n $ENV_NAME"
   echo "Continuing with existing env..."
@@ -66,7 +74,7 @@ echo ""
 # -----------------------------------------------------------------------------
 # STEP 4: Verify
 # -----------------------------------------------------------------------------
-echo "=== STEP 4/4: Verify ==="
+echo "=== STEP 4/5: Verify ==="
 python -c "import torch; import omnisafe; import gymnasium; print('OK')"
 echo ""
 
