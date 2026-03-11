@@ -21,9 +21,8 @@ START_FROM="${1:-1}"
 if [ "$START_FROM" -le 1 ]; then
   echo "=== STEP 1/4: install a supported Python for SACPID ==="
   sudo apt-get update -qq
-  sudo apt-get install -y python3.10 python3.10-venv || \
-    sudo apt-get install -y python3.11 python3.11-venv || \
-    sudo apt-get install -y python3-full python3-venv
+  sudo apt-get install -y python3.10 python3.10-venv python3.10-dev || \
+    sudo apt-get install -y python3.11 python3.11-venv python3.11-dev
   echo "Step 1 done."
   echo ""
 fi
@@ -43,7 +42,14 @@ if [ "$START_FROM" -le 2 ]; then
   elif command -v python3.11 >/dev/null 2>&1; then
     PYTHON_BIN="python3.11"
   else
-    PYTHON_BIN="python3"
+    echo "ERROR: python3.10 or python3.11 not found."
+    echo "This project currently should not use Python 3.12 because omnisafe pulls"
+    echo "pandas==2.0.3, which causes install/build issues there."
+    echo "Install one of these first, then rerun:"
+    echo "  sudo apt-get install -y python3.10 python3.10-venv python3.10-dev"
+    echo "or"
+    echo "  sudo apt-get install -y python3.11 python3.11-venv python3.11-dev"
+    exit 1
   fi
   echo "Using Python interpreter: $PYTHON_BIN ($($PYTHON_BIN --version 2>&1))"
   "$PYTHON_BIN" -m venv "$VENV_DIR"
@@ -59,6 +65,7 @@ if [ "$START_FROM" -le 3 ]; then
     echo "ERROR: requirements.txt not found at $REQUIREMENTS"
     exit 1
   fi
+  echo "Using venv Python: $("$VENV_DIR/bin/python" --version 2>&1)"
   echo "=== STEP 3/4: pip install (setuptools, wheel, torch, requirements) ==="
   echo "  3a. Upgrade pip, setuptools, wheel..."
   "$VENV_DIR/bin/pip" install --upgrade pip setuptools wheel
