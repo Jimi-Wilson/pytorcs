@@ -34,6 +34,9 @@ else
   rm -f /tmp/miniconda.sh
   echo "Miniconda installed."
 fi
+
+# Add conda to ~/.bashrc so it works in new terminals
+"$CONDA_PREFIX/bin/conda" init bash 2>/dev/null || true
 echo ""
 
 # -----------------------------------------------------------------------------
@@ -66,7 +69,10 @@ conda install pytorch torchvision torchaudio -c pytorch -y
 echo "  3b. Install gymnasium, numpy, scipy, wandb..."
 pip install gymnasium numpy scipy wandb
 
-echo "  3c. Install omnisafe..."
+echo "  3c. Install pygame and mujoco from conda-forge (pre-built; avoids source build failures)..."
+conda install -c conda-forge pygame mujoco -y
+
+echo "  3d. Install omnisafe..."
 pip install omnisafe
 
 echo ""
@@ -79,6 +85,10 @@ python -c "import torch; import omnisafe; import gymnasium; print('OK')"
 echo ""
 
 echo "=== Setup complete ==="
+echo ""
+echo "IMPORTANT: In a NEW terminal (or run 'source ~/.bashrc'), conda will be in PATH."
+echo "If 'conda' not found, run:  source ~/.bashrc"
+echo ""
 echo "Activate:  conda activate $ENV_NAME"
 echo "Then:      ./run_train_spot.sh 1   or   python test_drive.py"
 echo ""
