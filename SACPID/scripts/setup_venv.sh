@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# One-shot setup: install Ubuntu venv packages, create .venv, install SACPID deps.
-# Uses the venv's pip by path so you never hit "externally-managed-environment".
-#
-# Usage:  cd ~/project/SACPID   &&   bash scripts/setup_venv.sh
-# Then:   source .venv/bin/activate   before running python or ./run_train_spot.sh
+# SACPID venv setup — run steps in order. If a step fails, fix and re-run from that step.
+# Usage:  cd ~/project/SACPID
+#         bash scripts/setup_venv.sh          # run all steps
+#         bash scripts/setup_venv.sh 2        # run from step 2 only
+# Then:   source .venv/bin/activate
 
 set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -12,41 +12,63 @@ cd "$SACPID_ROOT"
 
 VENV_DIR="$SACPID_ROOT/.venv"
 PYTHON="${PYTHON:-python3}"
-
-echo "=== SACPID environment setup ==="
-echo ""
-
-# 1. Ubuntu packages for a proper venv (fixes PEP 668 / externally-managed issues)
-echo "[1/4] Installing python3-full and python3-venv (sudo)..."
-sudo apt-get update -qq
-sudo apt-get install -y python3-full python3-venv
-
-# 2. Create venv
-echo "[2/4] Creating .venv..."
-if [ -d "$VENV_DIR" ]; then
-  rm -rf "$VENV_DIR"
-fi
-$PYTHON -m venv "$VENV_DIR"
-
-# 3. Install with venv's pip by path (never touch system pip)
 REQUIREMENTS="$SACPID_ROOT/requirements.txt"
-if [ ! -f "$REQUIREMENTS" ]; then
-  echo "ERROR: requirements.txt not found at $REQUIREMENTS"
-  echo "Run this script from the SACPID repo (e.g. cd ~/project/SACPID)."
-  echo "If you used sparse checkout, ensure requirements.txt is checked out:  git sparse-checkout list"
-  exit 1
+START_FROM="${1:-1}"
+
+# -----------------------------------------------------------------------------
+# STEP 1: Ubuntu packages (run once)
+# -----------------------------------------------------------------------------
+if [ "$START_FROM" -le 1 ]; then
+  echo "=== STEP 1/4: apt install python3-full python3-venv ==="
+  sudo apt-get update -qq
+  sudo apt-get install -y python3-full python3-venv
+  echo "Step 1 done."
+  echo ""
 fi
-echo "[3/4] Installing pip, setuptools, wheel, torch, and requirements..."
-"$VENV_DIR/bin/pip" install --upgrade pip setuptools wheel --quiet
-"$VENV_DIR/bin/pip" install torch torchvision torchaudio --quiet
-"$VENV_DIR/bin/pip" install -r "$REQUIREMENTS" --quiet
 
-# 4. Verify
-echo "[4/4] Verifying..."
-"$VENV_DIR/bin/python" -c "import torch; import omnisafe; import gymnasium; print('OK')"
+# -----------------------------------------------------------------------------
+# STEP 2: Create .venv (run once, or to recreate)
+# -----------------------------------------------------------------------------
+if [ "$START_FROM" -le 2 ]; then
+  echo "=== STEP 2/4: Create .venv ==="
+  if [ -d "$VENV_DIR" ]; then
+    rm -rf "$VENV_DIR"
+  fi
+  $PYTHON -m venv "$VENV_DIR"
+  echo "Step 2 done."
+  echo ""
+fi
 
-echo ""
-echo "=== Done ==="
-echo "Activate with:  source $VENV_DIR/bin/activate"
-echo "Then run:       python test_drive.py   or   ./run_train_spot.sh 1"
+# -----------------------------------------------------------------------------
+# STEP 3: pip install (can re-run if it failed partway)
+# -----------------------------------------------------------------------------
+if [ "$START_FROM" -le 3 ]; then
+  if [ ! -f "$REQUIREMENTS" ]; then
+    echo "ERROR: requirements.txt not found at $REQUIREMENTS"
+    exit 1
+  fi
+  echo "=== STEP 3/4: pip install (setuptools, wheel, torch, requirements) ==="
+  echo "  3a. Upgrade pip, setuptools, wheel..."
+  "$VENV_DIR/bin/pip" install --upgrade pip setuptools wheel
+  echo "  3b. Install torch..."
+  "$VENV_DIR/bin/pip" install torch torchvision torchaudio
+  echo "  3c. Install requirements.txt (--no-build-isolation so build sees setuptools)..."
+  "$VENV_DIR/bin/pip" install -r "$REQUIREMENTS" --no-build-isolation
+  echo "Step 3 done."
+  echo ""
+fi
+
+# -----------------------------------------------------------------------------
+# STEP 4: Verify
+# -----------------------------------------------------------------------------
+if [ "$START_FROM" -le 4 ]; then
+  echo "=== STEP 4/4: Verify ==="
+  "$VENV_DIR/bin/python" -c "import torch; import omnisafe; import gymnasium; print('OK')"
+  echo "Step 4 done."
+  echo ""
+fi
+
+echo "=== Setup complete ==="
+echo "Activate:  source $VENV_DIR/bin/activate"
+echo "Then:      python test_drive.py   or   ./run_train_spot.sh 1"
 echo ""
