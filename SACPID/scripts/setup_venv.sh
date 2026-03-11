@@ -29,10 +29,17 @@ fi
 $PYTHON -m venv "$VENV_DIR"
 
 # 3. Install with venv's pip by path (never touch system pip)
-echo "[3/4] Installing pip, torch, and requirements..."
-"$VENV_DIR/bin/pip" install --upgrade pip --quiet
+REQUIREMENTS="$SACPID_ROOT/requirements.txt"
+if [ ! -f "$REQUIREMENTS" ]; then
+  echo "ERROR: requirements.txt not found at $REQUIREMENTS"
+  echo "Run this script from the SACPID repo (e.g. cd ~/project/SACPID)."
+  echo "If you used sparse checkout, ensure requirements.txt is checked out:  git sparse-checkout list"
+  exit 1
+fi
+echo "[3/4] Installing pip, setuptools, wheel, torch, and requirements..."
+"$VENV_DIR/bin/pip" install --upgrade pip setuptools wheel --quiet
 "$VENV_DIR/bin/pip" install torch torchvision torchaudio --quiet
-"$VENV_DIR/bin/pip" install -r requirements.txt --quiet
+"$VENV_DIR/bin/pip" install -r "$REQUIREMENTS" --quiet
 
 # 4. Verify
 echo "[4/4] Verifying..."
