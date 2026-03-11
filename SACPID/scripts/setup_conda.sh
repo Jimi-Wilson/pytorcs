@@ -33,6 +33,10 @@ echo ""
 # -----------------------------------------------------------------------------
 echo "=== STEP 2/4: Init conda ==="
 eval "$("$CONDA_PREFIX/bin/conda" shell.bash hook)"
+
+# Accept Anaconda Terms of Service (required for pkgs/main and pkgs/r)
+conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/main
+conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/r
 echo ""
 
 # -----------------------------------------------------------------------------
