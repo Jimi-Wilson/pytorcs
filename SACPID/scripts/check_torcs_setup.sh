@@ -10,7 +10,8 @@ if command -v torcs &>/dev/null; then
   echo "[OK] torcs is in PATH: $(which torcs)"
   torcs --help 2>/dev/null | head -1 || true
 else
-  echo "[FAIL] 'torcs' not found in PATH. Install vtorcs/SCR TORCS (e.g. from source)."
+  echo "[FAIL] 'torcs' not found in PATH. Install SCR TORCS (port 3101) with:"
+  echo "  bash scripts/install_torcs_ubuntu.sh"
   exit 1
 fi
 
