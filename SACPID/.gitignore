@@ -20,8 +20,9 @@ wheels/
 .installed.cfg
 *.egg
 
-# TORCS Logs
+# TORCS Logs (keep requirements.txt tracked)
 *.txt
+!requirements.txt
 *.csv
 *.xml
 
