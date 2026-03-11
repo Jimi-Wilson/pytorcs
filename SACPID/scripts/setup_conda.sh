@@ -55,13 +55,18 @@ echo ""
 # -----------------------------------------------------------------------------
 echo "=== STEP 3/5: Create env '$ENV_NAME' and install packages ==="
 if conda env list | grep -qw "$ENV_NAME"; then
-  echo "Env '$ENV_NAME' exists. Recreate? Run: conda env remove -n $ENV_NAME"
-  echo "Continuing with existing env..."
+  conda activate "$ENV_NAME"
+  PYVER=$(python -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')" 2>/dev/null || echo "?")
+  if [ "$PYVER" != "3.10" ]; then
+    echo "ERROR: Env '$ENV_NAME' has Python $PYVER. pygame 2.1.0 needs Python 3.10 (no wheel for 3.11)."
+    echo "Recreate: conda env remove -n $ENV_NAME -y"
+    exit 1
+  fi
+  echo "Env '$ENV_NAME' exists (Python $PYVER), continuing..."
 else
-  conda create -n "$ENV_NAME" python=3.11 -y
+  conda create -n "$ENV_NAME" python=3.10 -y
+  conda activate "$ENV_NAME"
 fi
-
-conda activate "$ENV_NAME"
 
 echo "  3a. Install PyTorch (CPU; for GPU run: conda install pytorch-cuda=11.8 -c pytorch -c nvidia)..."
 conda install pytorch torchvision torchaudio -c pytorch -y
@@ -69,11 +74,11 @@ conda install pytorch torchvision torchaudio -c pytorch -y
 echo "  3b. Install gymnasium, numpy, scipy, wandb..."
 pip install gymnasium numpy scipy wandb
 
-echo "  3c. Install pygame and mujoco from conda-forge (pre-built; avoids source build failures)..."
-conda install -c conda-forge pygame mujoco -y
+echo "  3c. Install mujoco and pygame via pip (Python 3.10 has pygame 2.1.0 wheels; 3.11 does not)..."
+pip install --no-cache-dir mujoco==2.3.3 pygame==2.1.0
 
-echo "  3d. Install omnisafe..."
-pip install omnisafe
+echo "  3d. Install omnisafe (will use already-installed mujoco/pygame)..."
+pip install --no-cache-dir omnisafe
 
 echo ""
 
