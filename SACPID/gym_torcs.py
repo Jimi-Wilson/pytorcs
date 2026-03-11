@@ -1,9 +1,7 @@
-import gymnasium as gym
 from gymnasium import spaces
 import numpy as np
 # from os import path
 import snakeoil3_gym as snakeoil3
-import numpy as np
 import copy
 import collections as col
 import os
@@ -95,24 +93,22 @@ class TorcsEnv:
         else:
             action_torcs['accel'] = this_action['accel']
 
-        #  Automatic Gear Change by Snakeoil
+        #  Automatic Gear Change (RPM-based, like a real racer)
         if self.gear_change is True:
             action_torcs['gear'] = this_action['gear']
         else:
-            #  Automatic Gear Change by Snakeoil is possible
-            action_torcs['gear'] = 1
-            """
-            if client.S.d['speedX'] > 50:
-                action_torcs['gear'] = 2
-            if client.S.d['speedX'] > 80:
-                action_torcs['gear'] = 3
-            if client.S.d['speedX'] > 110:
-                action_torcs['gear'] = 4
-            if client.S.d['speedX'] > 140:
-                action_torcs['gear'] = 5
-            if client.S.d['speedX'] > 170:
-                action_torcs['gear'] = 6
-            """
+            rpm = client.S.d['rpm']
+            gear = client.S.d['gear']
+
+            # Upshift near redline, downshift when RPM drops too low
+            if gear < 1:
+                gear = 1
+            elif gear < 6 and rpm > 8000:
+                gear += 1
+            elif gear > 1 and rpm < 4000:
+                gear -= 1
+
+            action_torcs['gear'] = gear
 
         # Save the privious full-obs from torcs for the reward calculation
         obs_pre = copy.deepcopy(client.S.d)
@@ -126,8 +122,8 @@ class TorcsEnv:
         # Get the current full-observation from torcs
         obs = client.S.d
 
-        # Make an obsevation from a raw observation vector from TORCS
-        self.observation = self.make_observaton(obs)
+        # Make an observation from a raw observation vector from TORCS
+        self.observation = self.make_observation(obs)
 
         # Reward setting Here #######################################
         # direction-dependent positive reward
@@ -190,7 +186,7 @@ class TorcsEnv:
         client.get_servers_input()  # Get the initial input from torcs
 
         obs = client.S.d  # Get the current full-observation from torcs
-        self.observation = self.make_observaton(obs)
+        self.observation = self.make_observation(obs)
 
         self.last_u = None
 
@@ -235,7 +231,7 @@ class TorcsEnv:
             temp = []
         return np.array(rgb, dtype=np.uint8)
 
-    def make_observaton(self, raw_obs):
+    def make_observation(self, raw_obs):
         if self.vision is False:
             names = ['focus',
                      'speedX', 'speedY', 'speedZ',
@@ -243,7 +239,7 @@ class TorcsEnv:
                      'rpm',
                      'track',
                      'wheelSpinVel']
-            Observation = col.namedtuple('Observaion', names)
+            Observation = col.namedtuple('Observation', names)
             return Observation(focus=np.array(raw_obs['focus'], dtype=np.float32)/200.,
                                speedX=np.array(raw_obs['speedX'], dtype=np.float32)/self.default_speed,
                                speedY=np.array(raw_obs['speedY'], dtype=np.float32)/self.default_speed,
@@ -260,7 +256,7 @@ class TorcsEnv:
                      'track',
                      'wheelSpinVel',
                      'img']
-            Observation = col.namedtuple('Observaion', names)
+            Observation = col.namedtuple('Observation', names)
 
             # Get RGB from observation
             image_rgb = self.obs_vision_to_image_rgb(raw_obs[names[8]])

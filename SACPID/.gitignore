@@ -29,3 +29,6 @@ wheels/
 .DS_Store
 .vscode/
 .idea/
+
+# Markdown (not pushed to remote)
+*.md

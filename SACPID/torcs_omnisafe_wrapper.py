@@ -36,6 +36,9 @@ class TorcsSafeEnv(CMDP):
         self._num_envs = 1  # required by OmniSafe adapter
 
         self.track_limit: float = kwargs.get('track_limit', 1.05)
+        self.stage: int = int(kwargs.get('stage', 1))
+        self.reward_scale: float = float(kwargs.get('reward_scale', 0.01))
+        self.centerline_penalty: float = float(kwargs.get('centerline_penalty', 1.0))
 
         # Base TORCS environment (vision=False, throttle=True for full control)
         self._env = TorcsEnv(vision=False, throttle=True, gear_change=False)
@@ -54,6 +57,8 @@ class TorcsSafeEnv(CMDP):
         )
 
         self._alpha = 0.2  # EMA smoothing factor for G-force features
+        self._wheel_radius = 0.33        # metres — typical TORCS rear-wheel radius
+        self._half_track_width = 6.0     # metres — approximate half track width
 
         self._reset_state_tracking()
 
@@ -125,14 +130,42 @@ class TorcsSafeEnv(CMDP):
         if reward == -1:
             cost = 1.0
 
+        # ---- Shaped reward (stage-dependent) ----
+        # Base env returns progress = speedX*cos(angle) or -1 on damage. Safety is in cost;
+        # avoid double-punishment by zeroing reward when cost > 0.
+        if cost >= 1.0:
+            shaped_reward = 0.0
+        else:
+            shaped_reward = float(reward) * self.reward_scale
+            if self.stage == 1:
+                shaped_reward -= self.centerline_penalty * abs(track_pos)
+        shaped_reward = np.clip(shaped_reward, -10.0, 10.0)
+
         terminated = bool(done)
         truncated  = False
 
         obs_np = np.nan_to_num(obs_np)
 
+        # ---- W&B Telemetry Logging ----
+        import wandb
+        if wandb.run is not None:
+            try:
+                wandb.log({
+                    "telemetry/speedX_kmh": float(raw_obs.speedX) * self._env.default_speed,
+                    "telemetry/speedY_kmh": float(raw_obs.speedY) * self._env.default_speed,
+                    "telemetry/steering_angle": float(np_action[0]),
+                    "telemetry/accel_brake": float(np_action[1]),
+                    "telemetry/rpm": float(raw_obs.rpm),
+                    "telemetry/track_position": float(track_pos),
+                    "telemetry/step_reward": float(shaped_reward),
+                    "telemetry/step_cost": float(cost),
+                }, commit=False)
+            except Exception:
+                pass
+
         return (
             torch.as_tensor(obs_np, dtype=torch.float32),
-            torch.as_tensor(reward, dtype=torch.float32),
+            torch.as_tensor(shaped_reward, dtype=torch.float32),
             torch.as_tensor(cost, dtype=torch.float32),
             torch.as_tensor(terminated, dtype=torch.bool),
             torch.as_tensor(truncated, dtype=torch.bool),
@@ -147,6 +180,16 @@ class TorcsSafeEnv(CMDP):
 
         # gym_torcs.reset returns (obs_namedtuple, {})
         raw_obs, _ = self._env.reset(relaunch=True)
+
+        # Seed prev-state trackers from the actual spawn state so the first
+        # step's deltas (G-force, TTB) are zero instead of a false spike.
+        self.prev_speedX = float(raw_obs.speedX)
+        self.prev_speedY = float(raw_obs.speedY)
+        self.prev_speedZ = float(raw_obs.speedZ)
+        try:
+            self.prev_trackPos = float(self._env.client.S.d['trackPos'])
+        except Exception:
+            self.prev_trackPos = 0.0
 
         obs_np = self._engineer_features(raw_obs)
 
@@ -164,6 +207,7 @@ class TorcsSafeEnv(CMDP):
         self.ema_accelX  = 0.0
         self.ema_accelY  = 0.0
         self.ema_accelZ  = 0.0
+        self.prev_trackPos = 0.0
 
     def _engineer_features(self, raw_obs) -> np.ndarray:
         """
@@ -174,7 +218,7 @@ class TorcsSafeEnv(CMDP):
           [4-5]   angle, rpm                           (2 car state)
           [6-13]  slip_angle, tire_slip, accelX,       (8 derived features)
                   accelY, accelZ, curvature,
-                  panic_ttb, placeholder
+                  ttb, placeholder
           [14-32] track sensors (19 lidar rays)
         """
         norm_speedX = float(raw_obs.speedX)
@@ -199,8 +243,15 @@ class TorcsSafeEnv(CMDP):
         slip_angle = float(np.arctan2(norm_speedY, norm_speedX + 1e-8)) / (np.pi / 2.0)
 
         # ---- 2. Longitudinal tire slip (rear wheels) ----
-        avg_rear_spin = (raw_obs.wheelSpinVel[2] + raw_obs.wheelSpinVel[3]) / 2.0 / 100.0
-        tire_slip_delta = float(np.clip(avg_rear_spin - norm_speedX, -1.0, 1.0))
+        avg_rear_rads = (raw_obs.wheelSpinVel[2] + raw_obs.wheelSpinVel[3]) / 2.0
+        wheel_speed_ms = avg_rear_rads * self._wheel_radius
+        car_speed_ms = norm_speedX * self._env.default_speed / 3.6
+        # Low-speed deadband: below ~5 km/h the wheel signals are noisy
+        if abs(car_speed_ms) < 1.4:
+            tire_slip_delta = 0.0
+        else:
+            denom = max(abs(wheel_speed_ms), abs(car_speed_ms), 1.0)
+            tire_slip_delta = float(np.clip((wheel_speed_ms - car_speed_ms) / denom, -1.0, 1.0))
 
         # ---- 3. EMA G-forces (X, Y) ----
         raw_ax = norm_speedX - self.prev_speedX
@@ -211,15 +262,16 @@ class TorcsSafeEnv(CMDP):
         self.ema_accelY = (1.0 - self._alpha) * self.ema_accelY + self._alpha * raw_ay
         self.prev_speedY = norm_speedY
 
-        norm_accelX = float(np.clip(self.ema_accelX / 10.0, -1.0, 1.0))
-        norm_accelY = float(np.clip(self.ema_accelY / 10.0, -1.0, 1.0))
+        speed_scale = self._env.default_speed  # undo normalisation for G-force
+        norm_accelX = float(np.clip(self.ema_accelX * speed_scale / 10.0, -1.0, 1.0))
+        norm_accelY = float(np.clip(self.ema_accelY * speed_scale / 10.0, -1.0, 1.0))
 
         # ---- 4. EMA vertical G-force (suspension unload) ----
         raw_az = norm_speedZ - self.prev_speedZ
         self.ema_accelZ = (1.0 - self._alpha) * self.ema_accelZ + self._alpha * raw_az
         self.prev_speedZ = norm_speedZ
 
-        norm_accelZ = float(np.clip(self.ema_accelZ / 5.0, -1.0, 1.0))
+        norm_accelZ = float(np.clip(self.ema_accelZ * speed_scale / 5.0, -1.0, 1.0))
 
         # ---- 5. Track curvature ----
         # track_sensors are ALREADY normalised (/200) in gym_torcs, so
@@ -228,13 +280,24 @@ class TorcsSafeEnv(CMDP):
         curve_delta = float(track_sensors[18] - track_sensors[0])
 
         # ---- 6. Time-to-boundary panic ----
-        dist_to_edge = 1.0 - abs(track_pos)
-        moving_outward = (track_pos * norm_speedY) > 0
-        if moving_outward and abs(norm_speedY) > 0.05:
-            ttb = dist_to_edge / (abs(norm_speedY) + 1e-6)
-            panic_ttb = float(np.clip(1.0 / ttb, 0.0, 1.0))
+        # Use d(trackPos)/dt — captures ALL lateral drift (heading, curvature,
+        # lateral velocity) rather than just speedY in the car's local frame.
+        trackPos_rate = track_pos - self.prev_trackPos
+        self.prev_trackPos = track_pos
+
+        dist_to_edge = max(self.track_limit - abs(track_pos), 0.0)
+        moving_outward = track_pos * trackPos_rate > 0  # drifting toward ±limit
+
+        if dist_to_edge <= 0.0:
+            # Already at or past the cost boundary → no time left
+            ttb = 0.0
+        elif moving_outward and abs(trackPos_rate) > 0.001:
+            steps_to_edge = dist_to_edge / (abs(trackPos_rate) + 1e-8)
+            # Panic TTB: 0.0 at edge, 1.0 when ≥100 steps (~5 s) away
+            ttb = float(np.clip(steps_to_edge / 100.0, 0.0, 1.0))
         else:
-            panic_ttb = 0.0
+            # Moving inward or stationary → safe
+            ttb = 1.0
 
         # ---- Assemble 33-dim vector ----
         rpm_norm = float(raw_obs.rpm) / 10000.0
@@ -247,7 +310,7 @@ class TorcsSafeEnv(CMDP):
             # Derived features (8)
             slip_angle, tire_slip_delta,
             norm_accelX, norm_accelY, norm_accelZ,
-            curve_delta, panic_ttb,
+            curve_delta, ttb,
             0.0,   # placeholder (expand later, e.g. lap-time delta)
         ], dtype=np.float32)
 

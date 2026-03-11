@@ -30,7 +30,7 @@ def format_bar(value, width=20, vmin=-1.0, vmax=1.0):
     return '█' * filled + '░' * (width - filled)
 
 
-def build_sensor_dashboard(raw, step, log_file):
+def build_sensor_dashboard(raw, step, log_file, ema_ax=0.0, ema_ay=0.0, ema_az=0.0, prev_trackPos=0.0):
     """Build the dashboard as a string and return it."""
     lines = []
     a = lines.append
@@ -91,24 +91,48 @@ def build_sensor_dashboard(raw, step, log_file):
     a(f"  │  Rear  Left:   {wsv[2]:+8.1f}    Rear  Right:  {wsv[3]:+8.1f}      │")
     a(f"  └─────────────────────────────────────────────────────────┘")
 
-    # ---- Focus Sensors ----
-    focus = raw.get('focus', [0]*5)
-    a(f"")
-    a(f"  ┌─── FOCUS SENSORS (5 rays, max 200m) ──────────────────┐")
-    focus_str = "  ".join(f"{f:6.1f}m" for f in focus)
-    a(f"  │  {focus_str}      │")
-    a(f"  └─────────────────────────────────────────────────────────┘")
-
     # ---- Derived Values (what the NN will see) ----
     slip_angle = np.arctan2(speedY, speedX + 1e-8) / (np.pi / 2.0)
-    avg_rear = (wsv[2] + wsv[3]) / 2.0
     curve = (track[18] - track[0]) / 200.0
+
+    # Longitudinal tire slip (rear-wheel drive assumption)
+    WHEEL_RADIUS = 0.33       # metres — typical TORCS rear wheel
+    avg_rear_rads = (wsv[2] + wsv[3]) / 2.0
+    wheel_speed_ms = avg_rear_rads * WHEEL_RADIUS
+    car_speed_ms = speedX / 3.6
+    # Low-speed deadband: below 5 km/h the wheel signals are noisy junk
+    if abs(speedX) < 5.0:
+        tire_slip = 0.0
+    else:
+        denom = max(abs(wheel_speed_ms), abs(car_speed_ms), 1.0)
+        tire_slip = float(np.clip((wheel_speed_ms - car_speed_ms) / denom, -1.0, 1.0))
+
+    # Time-to-boundary panic — uses d(trackPos)/dt to capture ALL drift
+    # (heading angle, curvature, lateral velocity) not just speedY.
+    trackPos_rate = trackPos - prev_trackPos
+    TRACK_LIMIT = 1.05  # must match the wrapper's track_limit
+    dist_to_edge = max(TRACK_LIMIT - abs(trackPos), 0.0)
+    moving_outward = trackPos * trackPos_rate > 0   # drifting toward ±limit
+
+    if dist_to_edge <= 0.0:
+        ttb = 0.0
+    elif moving_outward and abs(trackPos_rate) > 0.001:
+        steps_to_edge = dist_to_edge / (abs(trackPos_rate) + 1e-8)
+        # Panic TTB: 0.0 at edge, 1.0 when ≥100 steps (~5 s) away
+        ttb = float(np.clip(steps_to_edge / 100.0, 0.0, 1.0))
+    else:
+        # Moving inward or stationary → safe
+        ttb = 1.0
 
     a(f"")
     a(f"  ┌─── DERIVED FEATURES (what the NN sees) ────────────────┐")
     a(f"  │  Chassis Slip Angle: {slip_angle:+.4f}                              │")
-    a(f"  │  Rear Wheel Avg:     {avg_rear:+.1f} rad/s                          │")
+    a(f"  │  Tire Slip Delta:    {tire_slip:+.4f}  (>0 burnout, <0 locked) │")
     a(f"  │  Track Curvature:    {curve:+.4f}  (+ = right, - = left)       │")
+    a(f"  │  Panic TTB:          {ttb:+.4f}  (1=safe, 0=at edge)       │")
+    a(f"  │  G-Force X (lon):    {ema_ax:+.4f}  (EMA accel)                │")
+    a(f"  │  G-Force Y (lat):    {ema_ay:+.4f}  (EMA accel)                │")
+    a(f"  │  G-Force Z (vert):   {ema_az:+.4f}  (suspension unload)        │")
     a(f"  └─────────────────────────────────────────────────────────┘")
 
     a(f"")
@@ -134,6 +158,20 @@ def main():
 
     log_frames = []  # accumulate dashboard text frames
 
+    # EMA state tracking for G-force derived features
+    alpha = 0.2
+    ema_accelX  = 0.0
+    ema_accelY  = 0.0
+    ema_accelZ  = 0.0
+
+    # Seed prev-state trackers from the actual spawn state so the first
+    # step's deltas (G-force, TTB) are zero instead of a false spike.
+    raw_init = env.client.S.d
+    prev_speedX   = raw_init.get('speedX', 0.0)
+    prev_speedY   = raw_init.get('speedY', 0.0)
+    prev_speedZ   = raw_init.get('speedZ', 0.0)
+    prev_trackPos = raw_init.get('trackPos', 0.0)
+
     step = 0
     try:
         while True:
@@ -143,13 +181,35 @@ def main():
             trackPos = raw.get('trackPos', 0.0)
             angle    = raw.get('angle', 0.0)
             speedX   = raw.get('speedX', 0.0)
+            speedY   = raw.get('speedY', 0.0)
+            speedZ   = raw.get('speedZ', 0.0)
+
+            # EMA G-force calculations
+            raw_ax = speedX - prev_speedX
+            ema_accelX = (1.0 - alpha) * ema_accelX + alpha * raw_ax
+            prev_speedX = speedX
+
+            raw_ay = speedY - prev_speedY
+            ema_accelY = (1.0 - alpha) * ema_accelY + alpha * raw_ay
+            prev_speedY = speedY
+
+            raw_az = speedZ - prev_speedZ
+            ema_accelZ = (1.0 - alpha) * ema_accelZ + alpha * raw_az
+            prev_speedZ = speedZ
+
+            norm_ax = float(np.clip(ema_accelX / 10.0, -1.0, 1.0))
+            norm_ay = float(np.clip(ema_accelY / 10.0, -1.0, 1.0))
+            norm_az = float(np.clip(ema_accelZ / 5.0, -1.0, 1.0))
 
             # Straight-line autopilot (no steering, gentle throttle)
             steer = 0.0
             accel = 0.5 if speedX < 80 else 0.1
 
             # Build dashboard text for every step
-            frame = build_sensor_dashboard(raw, step, log_file)
+            frame = build_sensor_dashboard(raw, step, log_file,
+                                           ema_ax=norm_ax, ema_ay=norm_ay, ema_az=norm_az,
+                                           prev_trackPos=prev_trackPos)
+            prev_trackPos = trackPos
             log_frames.append(frame)
 
             # Print to console every 5 steps
