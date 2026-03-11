@@ -52,7 +52,9 @@ if [ "$START_FROM" -le 3 ]; then
   "$VENV_DIR/bin/pip" install --upgrade pip setuptools wheel
   echo "  3b. Install torch..."
   "$VENV_DIR/bin/pip" install torch torchvision torchaudio
-  echo "  3c. Install requirements.txt (--no-build-isolation so build sees setuptools)..."
+  echo "  3c. Install pandas from wheel first (avoids building from source and pkg_resources errors)..."
+  "$VENV_DIR/bin/pip" install "pandas>=2.0,<3"
+  echo "  3d. Install rest of requirements.txt..."
   "$VENV_DIR/bin/pip" install -r "$REQUIREMENTS" --no-build-isolation
   echo "Step 3 done."
   echo ""
