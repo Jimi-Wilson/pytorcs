@@ -13,7 +13,7 @@ RACE_CONFIG = os.getenv("RACE_CONFIG")
 
 
 class TorcsClient:
-    def __init__(self, port: int = 3001, host = "localhost", driver_id="SCR", viewing_angles="-90 -75 -60 -45 -30 -20 -15 -10 -5 0 5 10 15 20 30 45 60 75 90"):
+    def __init__(self, port: int = 3001, host = "localhost", driver_id="SCR", viewing_angles="-45 -19 -12 -7 -4 -2.5 -1.7 -1 -.5 0 .5 1 1.7 2.5 4 7 12 19 45"):
         self.sensors = Sensor()
         self.actions = Action()
 
@@ -29,9 +29,11 @@ class TorcsClient:
     def connect(self, max_retries=30):
         init_msg = f"{self.driver_id}(init {self.viewing_angles})"
 
-        if self.sock is None:
-            self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            self.sock.settimeout(1)
+        if self.sock is not None:
+            try:
+                self.sock.close()
+            except Exception:
+                pass
 
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.sock.settimeout(1)
@@ -51,6 +53,8 @@ class TorcsClient:
             except ConnectionResetError:
                 print(f"TORCS server not listening on {self.host}:{self.port} Please start TORCS.")
                 time.sleep(1)
+
+        print(f"Failed to connect to TORCS after {max_retries} attempts.")
 
     def get_sensors(self):
         while True:
@@ -83,10 +87,10 @@ class TorcsClient:
 
     def restart_race(self):
         self.actions.meta = 1
-
-        self.sock.sendto(self.actions.to_msg().encode(), (self.host, self.port))
-
-        self.actions.meta = 0
+        try:
+            self.sock.sendto(self.actions.to_msg().encode(), (self.host, self.port))
+        finally:
+            self.actions.meta = 0
         time.sleep(1)
 
 class Action:
@@ -130,10 +134,7 @@ class Sensor:
 
     def update(self, raw_string: str):
         clean_string = raw_string.strip()
-        if clean_string.startswith('(') and clean_string.endswith(')'):
-            clean_string = clean_string[1:-1]
-
-        sensors = clean_string.split(")(")
+        sensors = clean_string.strip('()').split(")(")
 
         for sensor in sensors:
             parts = sensor.split()

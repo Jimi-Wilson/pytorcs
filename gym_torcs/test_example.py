@@ -10,8 +10,8 @@ env = TorcsEnv()
 
 model = PPO.load("model", env=env)
 
-obs, info = env.reset(options={"headless": False})
+obs, info = env.reset(headless=False)
 
 while True:
     action, _states = model.predict(obs, deterministic=True)
-    _, _, _, _, _ = env.step(action)
+    obs, _, terminated, truncated, _ = env.step(action)
