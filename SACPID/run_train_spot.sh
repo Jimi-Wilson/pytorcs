@@ -3,7 +3,8 @@
 # Use a persistent EBS volume for LOG_DIR so a new instance can resume from the same path.
 #
 # Usage:
-#   export SACPID_LOG_DIR=/data/sacpid-runs   # optional; default below
+#   conda activate torcs_env                 # activate env first (see scripts/setup_conda.sh)
+#   export SACPID_LOG_DIR=/data/sacpid-runs  # optional; default below
 #   ./run_train_spot.sh 1                    # stage 1
 #   ./run_train_spot.sh 2                    # stage 2
 #   ./run_train_spot.sh 1 --resume-from /data/sacpid-runs/run-xxx   # resume after interrupt
