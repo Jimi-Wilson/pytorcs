@@ -11,7 +11,7 @@ SACPID_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$SACPID_ROOT"
 
 VENV_DIR="$SACPID_ROOT/.venv"
-PYTHON="${PYTHON:-python3}"
+PYTHON="${PYTHON:-}"
 REQUIREMENTS="$SACPID_ROOT/requirements.txt"
 START_FROM="${1:-1}"
 
@@ -19,9 +19,11 @@ START_FROM="${1:-1}"
 # STEP 1: Ubuntu packages (run once)
 # -----------------------------------------------------------------------------
 if [ "$START_FROM" -le 1 ]; then
-  echo "=== STEP 1/4: apt install python3-full python3-venv ==="
+  echo "=== STEP 1/4: install a supported Python for SACPID ==="
   sudo apt-get update -qq
-  sudo apt-get install -y python3-full python3-venv
+  sudo apt-get install -y python3.10 python3.10-venv || \
+    sudo apt-get install -y python3.11 python3.11-venv || \
+    sudo apt-get install -y python3-full python3-venv
   echo "Step 1 done."
   echo ""
 fi
@@ -34,7 +36,17 @@ if [ "$START_FROM" -le 2 ]; then
   if [ -d "$VENV_DIR" ]; then
     rm -rf "$VENV_DIR"
   fi
-  $PYTHON -m venv "$VENV_DIR"
+  if [ -n "$PYTHON" ]; then
+    PYTHON_BIN="$PYTHON"
+  elif command -v python3.10 >/dev/null 2>&1; then
+    PYTHON_BIN="python3.10"
+  elif command -v python3.11 >/dev/null 2>&1; then
+    PYTHON_BIN="python3.11"
+  else
+    PYTHON_BIN="python3"
+  fi
+  echo "Using Python interpreter: $PYTHON_BIN ($($PYTHON_BIN --version 2>&1))"
+  "$PYTHON_BIN" -m venv "$VENV_DIR"
   echo "Step 2 done."
   echo ""
 fi
