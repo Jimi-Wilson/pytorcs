@@ -16,6 +16,7 @@ Weights & Biases: set WANDB_API_KEY or run `wandb login` to log runs to the web.
 import argparse
 import os
 import signal
+import sys
 import torch
 import omnisafe
 
@@ -127,4 +128,6 @@ if __name__ == '__main__':
     parser.add_argument('--save-freq', type=int, default=10,
                         help='Save model every N epochs (default 10 for Spot; lower = less work lost on interrupt)')
     args = parser.parse_args()
+    # Omnisafe parses sys.argv internally (getopt); remove our args so it doesn't see --log-dir etc.
+    sys.argv = [sys.argv[0]]
     train(args.stage, resume_from=args.resume_from, log_dir=args.log_dir, save_freq=args.save_freq)
