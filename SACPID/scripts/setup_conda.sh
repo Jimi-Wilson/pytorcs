@@ -62,17 +62,20 @@ fi
 conda create -n "$ENV_NAME" python=3.10 -y
 conda activate "$ENV_NAME"
 
-echo "  3a. Install PyTorch (CPU; for GPU run: conda install pytorch-cuda=11.8 -c pytorch -c nvidia)..."
-conda install pytorch torchvision torchaudio -c pytorch -y
-
-echo "  3b. Install gymnasium, numpy, scipy, wandb..."
-pip install gymnasium numpy scipy wandb
-
-echo "  3c. Install mujoco and pygame via pip (Python 3.10 has pygame 2.1.0 wheels; 3.11 does not)..."
+echo "  3a. Install mujoco and pygame first (Python 3.10 has wheels; 3.11 does not)..."
 pip install --no-cache-dir mujoco==2.3.3 pygame==2.1.0
 
-echo "  3d. Install omnisafe (will use already-installed mujoco/pygame)..."
+echo "  3b. Install PyTorch via pip (conda torch conflicts with pip omnisafe deps)..."
+pip install --no-cache-dir torch torchvision torchaudio
+
+echo "  3c. Install gymnasium, numpy, scipy, wandb..."
+pip install --no-cache-dir gymnasium numpy scipy wandb
+
+echo "  3d. Install omnisafe..."
 pip install --no-cache-dir omnisafe
+
+echo "  3e. Pin numpy<2 (pandas 2.0.3 from omnisafe is not compatible with numpy 2.x)..."
+pip install --no-cache-dir "numpy>=1.24,<2"
 
 echo ""
 

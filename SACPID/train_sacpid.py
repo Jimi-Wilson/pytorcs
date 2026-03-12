@@ -68,7 +68,7 @@ def train(
             'vector_env_nums': 1,   # TORCS UDP supports 1 client at a time
             'parallel': 1,
         },
-        'algo_cfgs': {
+        'lagrange_cfgs': {
             'cost_limit': cost_limit,
         },
         'logger_cfgs': {
