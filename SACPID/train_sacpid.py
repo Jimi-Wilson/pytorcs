@@ -85,17 +85,15 @@ def train(
 
     env_id = 'TorcsSafe-v0'
 
-    # Pass env options so the wrapper can apply stage-dependent reward (e.g. centerline penalty in Stage 1)
-    custom_cfgs['env_cfgs'] = {
+    # Pass stage-dependent env settings via the wrapper module (omnisafe
+    # doesn't forward custom kwargs to the env constructor).
+    torcs_omnisafe_wrapper.ENV_CONFIG = {
         'track_limit': track_limit,
         'stage': stage,
         'reward_scale': 0.01,
         'centerline_penalty': 1.0,
     }
 
-    # Instantiate the agent.
-    # OmniSafe discovers TorcsSafe-v0 through the @env_register decorator
-    # that fires when we imported torcs_omnisafe_wrapper above.
     agent = omnisafe.Agent(
         'SACPID',
         env_id,

@@ -16,6 +16,9 @@ from gymnasium import spaces
 from omnisafe.envs.core import CMDP, env_register
 from gym_torcs import TorcsEnv
 
+# Module-level config set by train_sacpid.py before Agent() is created.
+ENV_CONFIG: dict = {}
+
 
 @env_register
 class TorcsSafeEnv(CMDP):
@@ -35,10 +38,11 @@ class TorcsSafeEnv(CMDP):
         super().__init__(env_id)
         self._num_envs = 1  # required by OmniSafe adapter
 
-        self.track_limit: float = kwargs.get('track_limit', 1.05)
-        self.stage: int = int(kwargs.get('stage', 1))
-        self.reward_scale: float = float(kwargs.get('reward_scale', 0.01))
-        self.centerline_penalty: float = float(kwargs.get('centerline_penalty', 1.0))
+        cfg = {**ENV_CONFIG, **kwargs}
+        self.track_limit: float = float(cfg.get('track_limit', 1.05))
+        self.stage: int = int(cfg.get('stage', 1))
+        self.reward_scale: float = float(cfg.get('reward_scale', 0.01))
+        self.centerline_penalty: float = float(cfg.get('centerline_penalty', 1.0))
 
         # Base TORCS environment (vision=False, throttle=True for full control)
         self._env = TorcsEnv(vision=False, throttle=True, gear_change=False)
