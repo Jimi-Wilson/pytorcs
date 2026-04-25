@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+
+# Please run this script on your machine to confirm it works.
+
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
