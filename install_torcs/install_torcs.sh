@@ -18,6 +18,7 @@ APT_DEPS=(
   libalut-dev
   libxi-dev
   libxmu-dev
+  libxxf86vm-dev
   libxrender-dev
   libxrandr-dev
   libpng-dev
