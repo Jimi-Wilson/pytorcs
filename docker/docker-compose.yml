@@ -1,0 +1,21 @@
+services:
+  torcs-dev:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: torcs-dev
+    working_dir: /workspace
+    volumes:
+      - ..:/workspace
+    environment:
+      DISPLAY: ${DISPLAY:-}
+      TORCS_PORT: "3001"
+      ALSOFT_DRIVERS: "null"
+      ALUT_DRIVER: "null"
+      LIBGL_DRI3_DISABLE: "1"
+    ports:
+      - "3001:3001/udp"
+    devices:
+      - /dev/dri:/dev/dri
+    stdin_open: true
+    tty: true
