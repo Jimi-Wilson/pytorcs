@@ -15,7 +15,5 @@ services:
       LIBGL_DRI3_DISABLE: "1"
     ports:
       - "3001:3001/udp"
-    devices:
-      - /dev/dri:/dev/dri
     stdin_open: true
     tty: true
