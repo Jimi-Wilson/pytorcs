@@ -119,12 +119,14 @@ def load_ppo(
 
     ckpt = _resolve_ppo_checkpoint(checkpoint)
 
-    # Stage 4 is the evaluation default (full curriculum, all manoeuvres active)
-    env = SacpidPpoEnv(
-        stage=4,
-        port=int(port),
-        policy_action_dim=int(policy_action_dim),
-    )
+    # Stage 4 is the evaluation default (full curriculum, all manoeuvres active).
+    # Suppress the _TorcsSimSlot startup prints (port/stage/brake config lines).
+    with contextlib.redirect_stdout(io.StringIO()):
+        env = SacpidPpoEnv(
+            stage=4,
+            port=int(port),
+            policy_action_dim=int(policy_action_dim),
+        )
     model = PPO.load(str(ckpt))
     return model, env
 

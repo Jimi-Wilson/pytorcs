@@ -215,14 +215,10 @@ def main() -> None:
         )
         srv.start()
         time.sleep(1.0)  # wait for Flask to bind before opening browser
-
-        open_browser = not args.no_browser and not _is_headless()
-        if open_browser:
+        print(f"\n  Live dashboard: {srv.url}\n")
+        if not args.no_browser:
             import webbrowser
             webbrowser.open(srv.url)
-            print(f"Live dashboard: {srv.url}")
-        else:
-            print(f"Live dashboard: {srv.url}  (open in browser to view)")
 
     # ── Episode loop ─────────────────────────────────────────────────────────
     print(f"Running {args.episodes} episode(s)…  (TORCS must be running)\n")
