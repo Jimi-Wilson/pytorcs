@@ -208,17 +208,33 @@ def main() -> None:
     srv = None
     if args.serve:
         from server import EvalServer
+        import socket
         srv = EvalServer(
             total_episodes=args.episodes,
             checkpoint=args.checkpoint,
             port=args.serve_port,
         )
         srv.start()
-        time.sleep(1.0)  # wait for Flask to bind before opening browser
-        print(f"\n  Live dashboard: {srv.url}\n")
-        if not args.no_browser:
-            import webbrowser
-            webbrowser.open(srv.url)
+
+        # Poll until Flask is actually accepting connections (up to 10 s)
+        deadline = time.monotonic() + 10.0
+        ready = False
+        while time.monotonic() < deadline:
+            try:
+                with socket.create_connection(("127.0.0.1", args.serve_port), timeout=0.2):
+                    ready = True
+                    break
+            except OSError:
+                time.sleep(0.1)
+
+        if ready:
+            print(f"\n  Live dashboard →  {srv.url}\n")
+            if not args.no_browser:
+                import webbrowser
+                webbrowser.open(srv.url)
+        else:
+            print(f"\n  Warning: dashboard did not start on port {args.serve_port}. "
+                  f"Check that nothing else is using that port.\n")
 
     # ── Episode loop ─────────────────────────────────────────────────────────
     print(f"Running {args.episodes} episode(s)…  (TORCS must be running)\n")
