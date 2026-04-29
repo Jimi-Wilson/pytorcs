@@ -29,6 +29,34 @@ from pathlib import Path
 from typing import Any
 
 
+class _LiveAttemptSnapshot:
+    """Partial attempt built from live callbacks when interrupted."""
+
+    def __init__(self, data: dict[str, Any]) -> None:
+        lap_times = [float(x) for x in data.get("lap_times", []) if x is not None]
+        speeds = [float(x) for x in data.get("speeds", [])]
+        abs_track = [float(x) for x in data.get("abs_track_pos", [])]
+        steers = [float(x) for x in data.get("steers", [])]
+
+        self.dist_raced_m = float(data.get("dist_raced_m", 0.0))
+        self.laps_in_attempt = len(lap_times)
+        self.lap_completed = self.laps_in_attempt > 0
+        self.lap_time = min(lap_times) if lap_times else None
+        self.all_lap_times = lap_times
+        self.mean_speed_kmh = _mean(speeds) if speeds else 0.0
+        self.max_speed_kmh = max(speeds) if speeds else 0.0
+        self.min_speed_kmh = min(speeds) if speeds else 0.0
+        self.max_abs_track_pos = max(abs_track) if abs_track else 0.0
+        self.mean_abs_track_pos = _mean(abs_track) if abs_track else 0.0
+        self.steering_smoothness = _std(steers) if steers else 0.0
+        self.off_track_events = int(data.get("off_track_events", 0))
+        self.termination_reason = "interrupted"
+        self.step_count = int(data.get("step_count", 0))
+
+    def to_dict(self) -> dict[str, Any]:
+        return self.__dict__.copy()
+
+
 # ---------------------------------------------------------------------------
 # Aggregation
 # ---------------------------------------------------------------------------
@@ -297,6 +325,7 @@ def main() -> None:
     race_finished_due_to_timeout = False
     progress_obj: Any = None
     progress_task: Any = None
+    current_attempt_live: dict[str, Any] | None = None
     lap_debug_path: Path | None = None
     lap_debug_fp: Any = None
 
@@ -323,14 +352,46 @@ def main() -> None:
             progress_obj.advance(progress_task, 1)
 
     def _run_one() -> None:
-        nonlocal laps_completed, attempt_count, race_finished_due_to_timeout
+        nonlocal laps_completed, attempt_count, race_finished_due_to_timeout, current_attempt_live
         attempt_count += 1
         laps_seen_live = 0
+        current_attempt_live = {
+            "lap_times": [],
+            "speeds": [],
+            "abs_track_pos": [],
+            "steers": [],
+            "dist_raced_m": 0.0,
+            "step_count": 0,
+            "off_track_events": 0,
+            "_prev_off_track": False,
+        }
 
         def _on_lap(lap_time_s: float) -> None:
             nonlocal laps_seen_live
             laps_seen_live += 1
+            if current_attempt_live is not None:
+                current_attempt_live["lap_times"].append(float(lap_time_s))
             _record_lap(lap_time_s)
+
+        def _on_step(tele: dict[str, Any]) -> None:
+            if srv:
+                srv.push_step(tele)
+            if current_attempt_live is None:
+                return
+            speed = float(tele.get("speed", 0.0))
+            steer = float(tele.get("steer", 0.0))
+            tp = abs(float(tele.get("track_pos", 0.0)))
+            dist = float(tele.get("dist", 0.0))
+            step = int(tele.get("step", 0))
+            current_attempt_live["speeds"].append(speed)
+            current_attempt_live["steers"].append(steer)
+            current_attempt_live["abs_track_pos"].append(tp)
+            current_attempt_live["dist_raced_m"] = max(current_attempt_live["dist_raced_m"], dist)
+            current_attempt_live["step_count"] = max(current_attempt_live["step_count"], step)
+            off = tp > 1.0
+            if off and not bool(current_attempt_live.get("_prev_off_track", False)):
+                current_attempt_live["off_track_events"] += 1
+            current_attempt_live["_prev_off_track"] = off
 
         seed = args.seed if attempt_count == 1 else None
         if not _rich or args.verbose:
@@ -343,7 +404,7 @@ def main() -> None:
                 deterministic=True,
                 verbose=args.verbose,
                 seed=seed,
-                step_callback=srv.push_step if srv else None,
+                step_callback=_on_step,
                 lap_callback=_on_lap,
                 should_stop=lambda: laps_completed >= target_laps,
                 lap_debug=bool(args.lap_debug),
@@ -359,8 +420,10 @@ def main() -> None:
                     f"\n  Race finished: reconnect wait exceeded {args.reconnect_timeout_s:.1f}s "
                     f"after prior connection. Writing report…"
                 )
+                current_attempt_live = None
                 return
             print(f"\n  Attempt {attempt_count} failed: {exc}")
+            current_attempt_live = None
             return
         attempts.append(result)
         if result.laps_in_attempt > laps_seen_live:
@@ -368,6 +431,7 @@ def main() -> None:
                 _record_lap(None)
         if srv:
             srv.push_result(result)
+        current_attempt_live = None
         if not _rich or args.verbose:
             if result.laps_in_attempt > 0 and result.lap_time:
                 lap_str = f"laps={result.laps_in_attempt} best={result.lap_time:.2f}s"
@@ -506,8 +570,22 @@ def main() -> None:
             srv.set_complete()
 
     if not attempts:
-        print("No attempts completed — nothing to report.")
-        return
+        if laps_completed > 0:
+            if current_attempt_live is not None:
+                attempts.append(_LiveAttemptSnapshot(current_attempt_live))
+                print(
+                    "  Interrupted before attempt finalization; writing partial report "
+                    "from collected live telemetry."
+                )
+            else:
+                attempts.append(_LiveAttemptSnapshot({"lap_times": [0.0] * int(laps_completed)}))
+                print(
+                    "  Interrupted before attempt finalization; writing partial report "
+                    "from live lap counter."
+                )
+        else:
+            print("No laps or completed attempts — nothing to report.")
+            return
 
     if race_finished_due_to_timeout:
         print(
