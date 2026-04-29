@@ -207,34 +207,61 @@ def main() -> None:
     # ── Live server ──────────────────────────────────────────────────────────
     srv = None
     if args.serve:
-        from server import EvalServer
         import socket
+        print(f"[serve] importing EvalServer …", flush=True)
+        from server import EvalServer
+
+        # Check the port isn't already occupied before we even try
+        try:
+            with socket.create_connection(("127.0.0.1", args.serve_port), timeout=0.3):
+                print(f"[serve] ERROR: port {args.serve_port} is already in use — "
+                      f"kill the process using it or choose a different port with --serve-port", flush=True)
+                args.serve = False  # skip server, continue with eval
+        except OSError:
+            pass  # port is free, good
+
+    if args.serve:
+        print(f"[serve] constructing EvalServer on port {args.serve_port} …", flush=True)
         srv = EvalServer(
             total_episodes=args.episodes,
             checkpoint=args.checkpoint,
             port=args.serve_port,
         )
+        print(f"[serve] starting Flask thread …", flush=True)
         srv.start()
 
-        # Poll until Flask is actually accepting connections (up to 10 s)
+        # Poll until Flask accepts connections (up to 10 s)
         deadline = time.monotonic() + 10.0
-        ready = False
+        attempt  = 0
+        ready    = False
         while time.monotonic() < deadline:
+            attempt += 1
             try:
                 with socket.create_connection(("127.0.0.1", args.serve_port), timeout=0.2):
                     ready = True
+                    print(f"[serve] port open after {attempt} poll(s)", flush=True)
                     break
-            except OSError:
+            except OSError as e:
+                if attempt % 10 == 0:
+                    print(f"[serve] still waiting … (attempt {attempt}, error: {e})", flush=True)
+                # If the Flask thread already crashed, stop waiting
+                if getattr(srv, "_thread_error", []):
+                    print(f"[serve] thread error detected, aborting wait", flush=True)
+                    break
                 time.sleep(0.1)
 
         if ready:
-            print(f"\n  Live dashboard →  {srv.url}\n")
+            print(f"\n  Live dashboard →  {srv.url}\n", flush=True)
             if not args.no_browser:
                 import webbrowser
                 webbrowser.open(srv.url)
         else:
-            print(f"\n  Warning: dashboard did not start on port {args.serve_port}. "
-                  f"Check that nothing else is using that port.\n")
+            errors = getattr(srv, "_thread_error", [])
+            if errors:
+                print(f"\n  [serve] Flask failed to start: {errors[0]}\n", flush=True)
+            else:
+                print(f"\n  [serve] Timed out waiting for port {args.serve_port} after 10 s.\n"
+                      f"  Try:  lsof -i :{args.serve_port}  to see what is using it.\n", flush=True)
 
     # ── Episode loop ─────────────────────────────────────────────────────────
     print(f"Running {args.episodes} episode(s)…  (TORCS must be running)\n")

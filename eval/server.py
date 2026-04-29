@@ -353,12 +353,20 @@ class EvalServer:
     def start(self) -> None:
         import logging
         logging.getLogger("werkzeug").setLevel(logging.ERROR)
-        t = threading.Thread(
-            target=self._app.run,
-            kwargs={"host": "0.0.0.0", "port": self._port, "use_reloader": False, "debug": False},
-            daemon=True,
-        )
+
+        self._thread_error: list[Exception] = []
+
+        def _run() -> None:
+            try:
+                print(f"[server] Flask binding on 0.0.0.0:{self._port} …", flush=True)
+                self._app.run(host="0.0.0.0", port=self._port, use_reloader=False, debug=False)
+            except Exception as exc:
+                self._thread_error.append(exc)
+                print(f"[server] Flask thread crashed: {exc}", flush=True)
+
+        t = threading.Thread(target=_run, daemon=True)
         t.start()
+        self._thread = t
 
     @property
     def url(self) -> str:
