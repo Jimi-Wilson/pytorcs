@@ -246,3 +246,7 @@ cython_debug/
 
 torcs
 !/gym_torcs/.env
+
+# Eval outputs (timestamped artifacts)
+results/eval_*.json
+results/eval_*.html
