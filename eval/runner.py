@@ -25,8 +25,10 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "SACPID"))
 class EpisodeResult:
     # Race progress
     dist_raced_m: float
-    lap_completed: bool
-    lap_time: float | None          # None when lap was not completed
+    laps_in_attempt: int            # number of laps completed in this attempt (via lastLapTime)
+    lap_completed: bool             # derived: laps_in_attempt > 0
+    lap_time: float | None          # best lap time in this attempt; None if no lap completed
+    all_lap_times: list             # all per-lap times (for multi-lap attempts)
 
     # Speed
     mean_speed_kmh: float
@@ -144,6 +146,7 @@ def run_episode(
     deterministic: bool = True,
     verbose: bool = False,
     seed: int | None = None,
+    step_callback: Any = None,
 ) -> EpisodeResult:
     """Run one episode and return collected race statistics.
 
@@ -157,6 +160,11 @@ def run_episode(
     step_count = 0
     off_track_events = 0
     prev_off_track = False
+
+    # Lap detection via SCR lastLapTime field — TORCS updates this each time the
+    # car crosses the start/finish line; we watch for changes to count laps.
+    lap_times_list: list[float] = []
+    prev_last_lap = 0.0
 
     # REWARD_REMOVED — uncomment to restore reward monitoring
     # total_reward = 0.0
@@ -189,8 +197,27 @@ def run_episode(
                 off_track_events += 1
             prev_off_track = off
 
+        dist = float(tele.get("dist_raced_m", 0.0))
+
+        # Check SCR lastLapTime — non-zero and changed means a lap was just completed
+        try:
+            cur_last_lap = float(env._slot._env.client.S.d.get("lastLapTime", 0.0))
+        except (AttributeError, KeyError, TypeError):
+            cur_last_lap = 0.0
+        if cur_last_lap > 0.0 and cur_last_lap != prev_last_lap:
+            lap_times_list.append(cur_last_lap)
+            prev_last_lap = cur_last_lap
+
+        if step_callback is not None:
+            step_callback({
+                "speed":     round(speed, 1),
+                "steer":     round(steer, 4),
+                "track_pos": round(float(track_pos), 4) if track_pos is not None else 0.0,
+                "dist":      round(dist, 1),
+                "step":      step_count,
+            })
+
         if verbose:
-            dist = float(tele.get("dist_raced_m", 0.0))
             tp_str = f"{float(track_pos):.3f}" if track_pos is not None else "n/a"
             print(f"  step={step_count} speed={speed:.1f}km/h dist={dist:.1f}m trackPos={tp_str}")
 
@@ -198,10 +225,10 @@ def run_episode(
             break
 
     reason = str(info.get("termination_reason", "unknown"))
-    raw_lap_time = info.get("lap_time")
-    lap_completed = reason == "lap_complete"
-    lap_time = float(raw_lap_time) if lap_completed and raw_lap_time else None
     dist_m = float(info.get("sacpid_dist_raced_m", 0.0))
+    laps_in_attempt = len(lap_times_list)
+    lap_completed   = laps_in_attempt > 0
+    lap_time        = min(lap_times_list) if lap_times_list else None
 
     mean_speed = sum(speeds) / len(speeds) if speeds else 0.0
     max_speed  = max(speeds) if speeds else 0.0
@@ -214,8 +241,10 @@ def run_episode(
 
     return EpisodeResult(
         dist_raced_m=dist_m,
+        laps_in_attempt=laps_in_attempt,
         lap_completed=lap_completed,
         lap_time=lap_time,
+        all_lap_times=lap_times_list,
         mean_speed_kmh=mean_speed,
         max_speed_kmh=max_speed,
         min_speed_kmh=min_speed,

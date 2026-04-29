@@ -2,7 +2,9 @@
 Live evaluation dashboard server.
 
 Starts a Flask server in a background thread. evaluate.py pushes results
-as they complete; the browser polls /data every 3 s and redraws live.
+as they complete and step telemetry as the car drives; the browser polls:
+  /live  every 1 s  — real-time speed/steering/track-pos charts
+  /data  every 3 s  — per-episode results and progress
 
 The server stays up after eval finishes until you press Ctrl+C.
 """
@@ -52,16 +54,18 @@ _DASHBOARD_HTML = """<!DOCTYPE html>
 {font_css}
 
 :root {{
-  --purple:       rgb(68, 0, 153);
-  --purple-light: rgb(108, 40, 213);
-  --purple-dim:   rgba(68, 0, 153, 0.25);
-  --surface:      #0c0818;
-  --surface-card: #130f24;
-  --surface-mid:  #1a1535;
-  --border:       rgba(255,255,255,.07);
-  --text:         #f0eef8;
-  --text-mid:     #8c84b0;
-  --text-soft:    #564e78;
+  --purple:      rgb(68, 0, 153);
+  --purple-l:    rgb(108, 40, 213);
+  --purple-dim:  rgba(68, 0, 153, 0.10);
+  --neutral:     #7c6fa0;
+  --neutral-a:   rgba(124, 111, 160, 0.18);
+  --surface:     #ffffff;
+  --surface-off: #f5f3fb;
+  --bg:          #ece9f5;
+  --border:      #e0dcea;
+  --ink:         #0a0a14;
+  --ink-mid:     #3a3550;
+  --ink-soft:    #6b6585;
   --green:  #22c55e;
   --amber:  #f59e0b;
   --red:    #ef4444;
@@ -74,13 +78,12 @@ body {{
   font-family: 'Barlow Condensed', 'Arial Narrow', Arial, sans-serif;
   font-size: 15px;
   font-weight: 400;
-  color: var(--text);
-  background: var(--surface);
-  padding: 0;
+  color: var(--ink);
+  background: var(--bg);
   font-variant-numeric: tabular-nums;
 }}
 
-/* ── Top bar ── */
+/* ── Topbar ── */
 .topbar {{
   background: var(--purple);
   padding: .7rem 2rem;
@@ -93,7 +96,7 @@ body {{
   font-weight: 700;
   letter-spacing: .14em;
   text-transform: uppercase;
-  color: rgba(255,255,255,.55);
+  color: rgba(255,255,255,.5);
 }}
 .topbar .name {{
   font-size: 1rem;
@@ -111,20 +114,21 @@ body {{
 }}
 
 /* ── Progress ── */
-.prog-wrap {{
-  height: 4px;
-  background: var(--surface-mid);
-}}
+.prog-wrap {{ height: 4px; background: var(--border); }}
 .prog-bar {{
   height: 100%;
-  background: var(--purple-light);
+  background: var(--purple-l);
   width: 0%;
   transition: width .4s ease;
-  box-shadow: 0 0 12px rgba(108,40,213,.6);
+  box-shadow: 0 0 10px rgba(108,40,213,.4);
 }}
 
 /* ── Body ── */
-.body {{ padding: 1.5rem 2rem; max-width: 1000px; margin: 0 auto; }}
+.body {{
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 1.5rem 2rem 2rem;
+}}
 
 /* ── Status ── */
 .status {{
@@ -132,60 +136,131 @@ body {{
   font-weight: 700;
   letter-spacing: .1em;
   text-transform: uppercase;
-  color: var(--text-soft);
+  color: var(--ink-soft);
   margin-bottom: 1.25rem;
 }}
 .status .complete {{ color: var(--green); }}
 
-/* ── Last episode card ── */
-.last-card {{
-  display: none;
-  background: var(--surface-card);
+/* ── Section ── */
+.section {{
+  background: var(--surface);
   border: 1px solid var(--border);
-  border-left: 3px solid var(--purple);
-  padding: 1rem 1.25rem;
-  margin-bottom: 1.5rem;
-  flex-wrap: wrap;
-  gap: .4rem 2rem;
+  margin-bottom: 1rem;
 }}
-.kv .k {{
+.section-head {{
+  padding: .7rem 1.25rem;
+  border-bottom: 1px solid var(--border);
   font-size: .65rem;
   font-weight: 700;
-  letter-spacing: .1em;
+  letter-spacing: .12em;
   text-transform: uppercase;
-  color: var(--text-soft);
-  margin-bottom: .15rem;
-}}
-.kv .v {{
-  font-size: 1.1rem;
-  font-weight: 700;
-  color: var(--text);
+  color: var(--ink-soft);
+  display: flex;
+  align-items: center;
+  gap: .75rem;
 }}
 
-/* ── Charts ── */
-.charts-row {{
+/* ── Live indicator ── */
+.live-dot {{
+  display: inline-block;
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: var(--green);
+  animation: pulse 1.4s ease infinite;
+  flex-shrink: 0;
+}}
+@keyframes pulse {{
+  0%,100% {{ opacity:1; transform:scale(1); }}
+  50%      {{ opacity:.5; transform:scale(1.3); }}
+}}
+.attempt-pill {{
+  background: var(--purple-dim);
+  color: var(--purple);
+  border: 1px solid rgba(68,0,153,.2);
+  border-radius: 2px;
+  padding: .1rem .55rem;
+  font-size: .68rem;
+  font-weight: 700;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}}
+.step-counter {{
+  margin-left: auto;
+  color: var(--ink-soft);
+  font-weight: 400;
+}}
+
+/* ── Chart grids ── */
+.charts-3 {{
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 1px;
+  background: var(--border);
+  border-top: 1px solid var(--border);
+}}
+.charts-2 {{
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 1px;
   background: var(--border);
-  border: 1px solid var(--border);
+  border-top: 1px solid var(--border);
 }}
 .chart-box {{
-  background: var(--surface-card);
-  padding: 1.1rem 1.25rem;
+  background: var(--surface-off);
+  padding: 1rem 1.25rem;
 }}
 .chart-box h3 {{
-  font-size: .65rem;
+  font-size: .63rem;
   font-weight: 700;
   letter-spacing: .1em;
   text-transform: uppercase;
-  color: var(--text-soft);
-  margin-bottom: .75rem;
+  color: var(--ink-soft);
+  margin-bottom: .7rem;
 }}
-canvas {{ max-height: 220px; }}
+.charts-3 canvas {{ max-height: 160px; }}
+.charts-2 canvas {{ max-height: 220px; }}
 
-.dot {{ display: inline-block; width: 7px; height: 7px; border-radius: 50%;
-        vertical-align: middle; margin-right: 3px; }}
+/* ── Last-episode card ── */
+.last-card {{
+  display: none;
+  padding: .9rem 1.25rem;
+  border-top: 1px solid var(--border);
+  flex-wrap: wrap;
+  gap: .4rem 2rem;
+}}
+.kv .k {{
+  font-size: .62rem;
+  font-weight: 700;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+  margin-bottom: .12rem;
+}}
+.kv .v {{
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: var(--ink);
+}}
+
+/* ── Legend ── */
+.legend {{
+  padding: .7rem 1.25rem;
+  border-top: 1px solid var(--border);
+  display: flex;
+  gap: 1.5rem;
+  font-size: .72rem;
+  font-weight: 600;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  color: var(--ink-mid);
+}}
+.legend span {{ display: flex; align-items: center; gap: .4rem; }}
+.dot {{
+  display: inline-block;
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}}
 </style>
 </head>
 <body>
@@ -193,81 +268,176 @@ canvas {{ max-height: 220px; }}
 <div class="topbar">
   <span class="label">Live Eval</span>
   <span class="name">{checkpoint}</span>
-  <span class="ep-count" id="epCount">0 / {total}</span>
+  <span class="ep-count" id="lapCount">0 / {target_laps} laps</span>
+  <span class="ep-count" style="color:rgba(255,255,255,.5)" id="attemptCount">0 attempts</span>
 </div>
 <div class="prog-wrap"><div class="prog-bar" id="bar"></div></div>
 
 <div class="body">
-  <div class="status" id="status">Waiting for first episode…</div>
+  <div class="status" id="status">Waiting for first attempt…</div>
 
-  <div class="last-card" id="last">
-    <div class="kv"><div class="k">Episode</div><div class="v" id="lEp">—</div></div>
-    <div class="kv"><div class="k">Distance</div><div class="v" id="lDist">—</div></div>
-    <div class="kv"><div class="k">Lap time</div><div class="v" id="lLap">—</div></div>
-    <div class="kv"><div class="k">Mean speed</div><div class="v" id="lSpd">—</div></div>
-    <div class="kv"><div class="k">Max track pos</div><div class="v" id="lTp">—</div></div>
-    <div class="kv"><div class="k">Termination</div><div class="v" id="lReason">—</div></div>
+  <!-- Live telemetry -->
+  <div class="section" id="liveSection" style="display:none">
+    <div class="section-head">
+      <span class="live-dot"></span>
+      Live
+      <span class="attempt-pill" id="attemptPill">ATTEMPT 1</span>
+      <span class="step-counter" id="stepCounter">step 0</span>
+    </div>
+    <div class="charts-3">
+      <div class="chart-box"><h3>Speed (km/h)</h3><canvas id="lSpeedChart"></canvas></div>
+      <div class="chart-box"><h3>Steering</h3><canvas id="lSteerChart"></canvas></div>
+      <div class="chart-box"><h3>Track position</h3><canvas id="lTpChart"></canvas></div>
+    </div>
   </div>
 
-  <div class="charts-row">
-    <div class="chart-box"><h3>Distance raced (m)</h3><canvas id="distChart"></canvas></div>
-    <div class="chart-box"><h3>Mean speed (km/h)</h3><canvas id="speedChart"></canvas></div>
+  <!-- Per-attempt results -->
+  <div class="section" id="resultsSection" style="display:none">
+    <div class="section-head">Attempt Results</div>
+    <div class="last-card" id="last">
+      <div class="kv"><div class="k">Attempt</div><div class="v" id="lEp">—</div></div>
+      <div class="kv"><div class="k">Distance</div><div class="v" id="lDist">—</div></div>
+      <div class="kv"><div class="k">Lap time</div><div class="v" id="lLap">—</div></div>
+      <div class="kv"><div class="k">Mean speed</div><div class="v" id="lSpd">—</div></div>
+      <div class="kv"><div class="k">Max track pos</div><div class="v" id="lTp">—</div></div>
+      <div class="kv"><div class="k">Termination</div><div class="v" id="lReason">—</div></div>
+    </div>
+    <div class="charts-2">
+      <div class="chart-box"><h3>Distance per episode (m) — coloured by result</h3><canvas id="distChart"></canvas></div>
+      <div class="chart-box"><h3>Mean speed per episode (km/h)</h3><canvas id="speedChart"></canvas></div>
+    </div>
+    <div class="legend">
+      <span><span class="dot" style="background:var(--green)"></span>Lap complete</span>
+      <span><span class="dot" style="background:var(--amber)"></span>Timeout</span>
+      <span><span class="dot" style="background:var(--red)"></span>Off-track</span>
+      <span><span class="dot" style="background:var(--grey)"></span>Other</span>
+    </div>
   </div>
 </div>
 
 <script>{chartjs_src}</script>
 <script>
-const TOTAL  = {total};
-const PURPLE = 'rgb(68,0,153)';
-const PURPLE_L = 'rgb(108,40,213)';
-const PURPLE_A = 'rgba(68,0,153,0.3)';
+const TARGET_LAPS = {target_laps};
+const NEUTRAL   = '#7c6fa0';
+const NEUTRAL_A = 'rgba(124,111,160,0.2)';
+const PURPLE_L  = 'rgb(108,40,213)';
+const PURPLE_A  = 'rgba(108,40,213,0.15)';
+const AMBER     = 'rgba(245,158,11,0.85)';
+const AMBER_A   = 'rgba(245,158,11,0.15)';
 const RC = {{ lap_complete:'#22c55e', timeout:'#f59e0b', off_track:'#ef4444' }};
 const col = r => RC[r] || '#94a3b8';
 
-const chartOpts = (ylabel) => ({{
+const baseOpts = (ylabel, extra) => ({{
   responsive: true, maintainAspectRatio: true,
+  animation: false,
   plugins: {{ legend: {{ display: false }} }},
   scales: {{
     y: {{
-      grid: {{ color: 'rgba(255,255,255,.04)' }},
-      ticks: {{ color: '#564e78', font: {{ family: "'Barlow Condensed',Arial", size: 12 }} }},
-      title: {{ display: true, text: ylabel, color: '#564e78',
-                font: {{ family: "'Barlow Condensed',Arial", size: 11, weight: '700' }} }},
+      grid: {{ color: 'rgba(0,0,0,.05)' }},
+      ticks: {{ color: '#6b6585', font: {{ family:"'Barlow Condensed',Arial", size:11 }} }},
+      title: {{ display: true, text: ylabel, color:'#6b6585',
+                font: {{ family:"'Barlow Condensed',Arial", size:10, weight:'700' }} }},
+      ...extra,
     }},
     x: {{
       grid: {{ display: false }},
-      ticks: {{ color: '#564e78', font: {{ family: "'Barlow Condensed',Arial", size: 12 }} }},
+      ticks: {{ color: '#6b6585', font: {{ family:"'Barlow Condensed',Arial", size:11 }} }},
     }},
   }},
 }});
 
+/* ── Live charts ── */
+const MAX_LIVE = 300;
+const lLabels = [];
+const mkLive = (id, color, colorA, ylabel, yExtra) => new Chart(document.getElementById(id), {{
+  type: 'line',
+  data: {{ labels: lLabels, datasets: [{{
+    data: [], borderColor: color, backgroundColor: colorA,
+    fill: true, tension: 0.2, pointRadius: 0, borderWidth: 1.5,
+  }}] }},
+  options: baseOpts(ylabel, yExtra || {{}}),
+}});
+
+const lSpeed = mkLive('lSpeedChart', NEUTRAL,   NEUTRAL_A, 'km/h');
+const lSteer = mkLive('lSteerChart', PURPLE_L,  PURPLE_A,  'radians', {{ min:-1, max:1 }});
+const lTp    = mkLive('lTpChart',    AMBER,     AMBER_A,   'track pos', {{ min:-1.2, max:1.2 }});
+
+let _prevEp = -1, _prevStep = -1;
+
+function pushLive(step, speed, steer, tp) {{
+  lLabels.push(step);
+  lSpeed.data.datasets[0].data.push(speed);
+  lSteer.data.datasets[0].data.push(steer);
+  lTp.data.datasets[0].data.push(tp);
+  if (lLabels.length > MAX_LIVE) {{
+    lLabels.shift();
+    lSpeed.data.datasets[0].data.shift();
+    lSteer.data.datasets[0].data.shift();
+    lTp.data.datasets[0].data.shift();
+  }}
+  lSpeed.update('none'); lSteer.update('none'); lTp.update('none');
+}}
+
+/* ── Episode charts ── */
 const distChart = new Chart(document.getElementById('distChart'), {{
   type: 'bar',
   data: {{ labels: [], datasets: [{{ data: [], backgroundColor: [], borderRadius: 0, borderSkipped: false }}] }},
-  options: chartOpts('metres'),
+  options: {{ ...baseOpts('metres'), animation: false }},
 }});
 const speedChart = new Chart(document.getElementById('speedChart'), {{
   type: 'line',
   data: {{ labels: [], datasets: [{{
-    data: [], borderColor: PURPLE_L, backgroundColor: PURPLE_A,
-    fill: true, tension: 0.3, pointRadius: 4, pointBackgroundColor: PURPLE_L,
+    data: [], borderColor: NEUTRAL, backgroundColor: NEUTRAL_A,
+    fill: true, tension: 0.3, pointRadius: 4, pointBackgroundColor: NEUTRAL,
   }}] }},
-  options: chartOpts('km/h'),
+  options: {{ ...baseOpts('km/h'), animation: false }},
 }});
 
-async function poll() {{
+/* ── Live poll (1 s) ── */
+async function pollLive() {{
+  try {{
+    const d = await (await fetch('/live')).json();
+    if (d.active) {{
+      document.getElementById('liveSection').style.display = 'block';
+      document.getElementById('attemptPill').textContent = 'ATTEMPT ' + d.episode;
+      document.getElementById('stepCounter').textContent = 'step ' + d.step;
+
+      if (d.episode !== _prevEp || d.step <= _prevStep) {{
+        // New episode — clear buffers
+        lLabels.length = 0;
+        lSpeed.data.datasets[0].data.length = 0;
+        lSteer.data.datasets[0].data.length = 0;
+        lTp.data.datasets[0].data.length = 0;
+      }}
+      _prevEp   = d.episode;
+      _prevStep = d.step;
+      pushLive(d.step, d.speed, d.steer, d.track_pos);
+    }}
+  }} catch(e) {{ console.error('[eval] /live poll error:', e); }}
+  setTimeout(pollLive, 1000);
+}}
+
+/* ── Data poll (3 s) ── */
+async function pollData() {{
   try {{
     const d = await (await fetch('/data')).json();
     const eps = d.results, n = eps.length;
+    const laps = d.laps_completed;
 
-    document.getElementById('bar').style.width = (n / TOTAL * 100) + '%';
-    document.getElementById('epCount').textContent = n + ' / ' + TOTAL;
+    document.getElementById('bar').style.width = (laps / TARGET_LAPS * 100) + '%';
+    document.getElementById('lapCount').textContent = laps + ' / ' + TARGET_LAPS + ' laps';
+    document.getElementById('attemptCount').textContent = n + ' attempts';
 
     const st = document.getElementById('status');
-    if (d.complete) st.innerHTML = '<span class="complete">RUN COMPLETE</span> — ' + n + ' episodes';
-    else st.textContent = n + ' / ' + TOTAL + ' EPISODES COMPLETED';
+    if (d.complete) {{
+      st.innerHTML = '<span class="complete">RUN COMPLETE</span> — ' + laps + ' laps in ' + n + ' attempts';
+      document.getElementById('liveSection').style.display = 'none';
+    }} else {{
+      st.textContent = laps + ' / ' + TARGET_LAPS + ' LAPS COMPLETED  (' + n + ' attempts)';
+    }}
 
     if (n > 0) {{
+      document.getElementById('resultsSection').style.display = 'block';
       const last = eps[n-1];
       document.getElementById('last').style.display = 'flex';
       document.getElementById('lEp').textContent   = n;
@@ -276,11 +446,11 @@ async function poll() {{
       document.getElementById('lSpd').textContent  = last.mean_speed_kmh.toFixed(1) + ' km/h';
       document.getElementById('lTp').textContent   = (last.max_abs_track_pos * 100).toFixed(1) + '%';
       document.getElementById('lReason').innerHTML =
-        '<span class="dot" style="background:' + col(last.termination_reason) + '"></span>' +
+        '<span class="dot" style="background:' + col(last.termination_reason) + ';margin-right:4px"></span>' +
         last.termination_reason;
 
-      const labels = eps.map((_, i) => 'Ep ' + (i+1));
-      distChart.data.labels = labels;
+      const labels = eps.map((_, i) => 'A' + (i+1));
+      distChart.data.labels  = labels;
       distChart.data.datasets[0].data            = eps.map(e => e.dist_raced_m);
       distChart.data.datasets[0].backgroundColor = eps.map(e => col(e.termination_reason));
       distChart.update('none');
@@ -289,21 +459,27 @@ async function poll() {{
       speedChart.update('none');
     }}
 
-    setTimeout(poll, d.complete ? 10000 : 3000);
-  }} catch(e) {{ setTimeout(poll, 5000); }}
+    setTimeout(pollData, d.complete ? 10000 : 3000);
+  }} catch(e) {{ console.error('[eval] /data poll error:', e); setTimeout(pollData, 5000); }}
 }}
-poll();
+
+pollLive();
+pollData();
 </script>
 </body>
 </html>"""
 
 
 class EvalServer:
-    def __init__(self, total_episodes: int, checkpoint: str, port: int = 5001):
+    def __init__(self, target_laps: int, max_attempts: int, checkpoint: str, port: int = 5001):
         self._results: list[dict[str, Any]] = []
+        self._live: dict[str, Any] = {"active": False}
         self._lock = threading.Lock()
         self._complete = False
-        self._total = total_episodes
+        self._target_laps = target_laps
+        self._max_attempts = max_attempts
+        self._laps_completed = 0
+        self._attempt_count = 1
         self._checkpoint = Path(checkpoint).name
         self._port = port
         self._app = self._build_app()
@@ -324,7 +500,7 @@ class EvalServer:
             font_css=_font_face_css(),
             chartjs_src=_chartjs(),
             checkpoint=self._checkpoint,
-            total=self._total,
+            target_laps=self._target_laps,
         )
 
         @app.route("/")
@@ -335,24 +511,49 @@ class EvalServer:
         def data():
             with self._lock:
                 return jsonify({
-                    "results":  list(self._results),
-                    "complete": self._complete,
-                    "total":    self._total,
+                    "results":        list(self._results),
+                    "complete":       self._complete,
+                    "laps_completed": self._laps_completed,
+                    "target_laps":    self._target_laps,
                 })
+
+        @app.route("/live")
+        def live():
+            with self._lock:
+                return jsonify(dict(self._live))
 
         return app
 
     def push_result(self, result: Any) -> None:
         with self._lock:
-            self._results.append(result.to_dict())
+            d = result.to_dict()
+            self._results.append(d)
+            self._laps_completed += d.get("laps_in_attempt", 0)
+            self._attempt_count = len(self._results) + 1
+            self._live = {"active": False}
+
+    def push_step(self, tele: dict[str, Any]) -> None:
+        with self._lock:
+            self._live = {
+                "active":    True,
+                "episode":   self._attempt_count,
+                "speed":     tele.get("speed", 0.0),
+                "steer":     tele.get("steer", 0.0),
+                "track_pos": tele.get("track_pos", 0.0),
+                "dist":      tele.get("dist", 0.0),
+                "step":      tele.get("step", 0),
+            }
 
     def set_complete(self) -> None:
         with self._lock:
             self._complete = True
+            self._live = {"active": False}
 
     def start(self) -> None:
         import logging
+        from flask import cli as flask_cli
         logging.getLogger("werkzeug").setLevel(logging.ERROR)
+        flask_cli.show_server_banner = lambda *args, **kwargs: None
 
         self._thread_error: list[Exception] = []
 

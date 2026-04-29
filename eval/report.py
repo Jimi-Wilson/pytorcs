@@ -58,16 +58,18 @@ def _colour(reason: str) -> str:
 def _build_html(payload: dict[str, Any], chartjs_src: str, font_css: str) -> str:
     meta = payload["meta"]
     agg  = payload["aggregated"]
-    eps  = payload["episodes"]
+    eps  = payload["attempts"]
 
-    checkpoint = Path(meta["checkpoint"]).name
-    n_episodes = meta["episodes"]
-    seed       = meta["seed"]
-    timestamp  = meta["timestamp"][:19].replace("T", " ")
+    checkpoint      = Path(meta["checkpoint"]).name
+    target_laps     = meta.get("target_laps", meta.get("episodes", len(eps)))
+    laps_completed  = meta.get("laps_completed", sum(1 for e in eps if e.get("lap_completed")))
+    total_attempts  = meta.get("total_attempts", len(eps))
+    seed            = meta["seed"]
+    timestamp       = meta["timestamp"][:19].replace("T", " ")
 
     completion_pct = f'{agg["completion_rate"] * 100:.1f}%'
     reasons   = Counter(e["termination_reason"] for e in eps)
-    n_complete = reasons.get("lap_complete", 0)
+    n_complete = sum(1 for e in eps if e.get("laps_in_attempt", 0) > 0)
 
     best_lap  = f'{agg["best_lap_time"]:.2f}' if agg["best_lap_time"] else "—"
     mean_lap  = f'avg {agg["lap_time"]["mean"]:.2f} s' if agg["lap_time"] else "—"
@@ -78,14 +80,14 @@ def _build_html(payload: dict[str, Any], chartjs_src: str, font_css: str) -> str
     max_tp    = f'{agg["max_abs_track_pos"]["best"] * 100:.1f}'
     steer_sm  = f'{agg["steering_smoothness"]["best"]:.3f}'
 
-    ep_labels    = json.dumps([f"Ep {i+1}" for i in range(len(eps))])
+    ep_labels    = json.dumps([f"A{i+1}" for i in range(len(eps))])
     lap_times    = json.dumps([e["lap_time"] if e["lap_time"] else None for e in eps])
-    lap_colours  = json.dumps([_colour(e["termination_reason"]) for e in eps])
+    lap_colours  = json.dumps(["#7c6fa0"] * len(eps))
     mean_speeds  = json.dumps([round(e["mean_speed_kmh"], 1) for e in eps])
     distances    = json.dumps([round(e["dist_raced_m"], 0) for e in eps])
     dist_colours = json.dumps([_colour(e["termination_reason"]) for e in eps])
     track_pos    = json.dumps([round(e["max_abs_track_pos"] * 100, 1) for e in eps])
-    tp_colours   = json.dumps([_colour(e["termination_reason"]) for e in eps])
+    tp_colours   = json.dumps(["#7c6fa0"] * len(eps))
     reason_labels  = json.dumps(list(reasons.keys()))
     reason_counts  = json.dumps(list(reasons.values()))
     reason_colours = json.dumps([_colour(k) for k in reasons.keys()])
@@ -94,10 +96,14 @@ def _build_html(payload: dict[str, Any], chartjs_src: str, font_css: str) -> str
     for i, e in enumerate(eps):
         lt  = f'{e["lap_time"]:.2f}' if e["lap_time"] else "—"
         dot = f'<span class="dot" style="background:{_colour(e["termination_reason"])}"></span>'
-        chk = "✓" if e["lap_completed"] else "✗"
+        n_laps = e.get("laps_in_attempt", 1 if e.get("lap_completed") else 0)
+        if n_laps > 0:
+            chk = f'<span style="color:#22c55e;font-weight:700">{n_laps} lap{"s" if n_laps > 1 else ""}</span>'
+        else:
+            chk = '<span style="color:#94a3b8">—</span>'
         rows += (
             f'<tr>'
-            f'<td class="num">{i+1}</td>'
+            f'<td class="num">A{i+1}</td>'
             f'<td class="num">{e["dist_raced_m"]:.0f}</td>'
             f'<td style="text-align:center">{chk}</td>'
             f'<td class="num">{lt}</td>'
@@ -361,7 +367,8 @@ tr:hover td {{ background: var(--surface-off); }}
     <div class="eyebrow">TORCS · PPO · Evaluation Report</div>
     <h1>{checkpoint}</h1>
     <div class="meta">
-      <span><strong>Episodes</strong> {n_episodes}</span>
+      <span><strong>Laps</strong> {laps_completed} / {target_laps}</span>
+      <span><strong>Attempts</strong> {total_attempts}</span>
       <span><strong>Seed</strong> {seed}</span>
       <span><strong>Generated</strong> {timestamp} UTC</span>
     </div>
@@ -373,7 +380,7 @@ tr:hover td {{ background: var(--surface-off); }}
       <div class="card">
         <div class="label">Completion rate</div>
         <div class="value">{completion_pct}</div>
-        <div class="sub">{n_complete} of {n_episodes} laps finished</div>
+        <div class="sub">{laps_completed} laps in {total_attempts} attempts</div>
       </div>
       <div class="card">
         <div class="label">Best lap</div>
@@ -411,19 +418,19 @@ tr:hover td {{ background: var(--surface-off); }}
     <h2>Performance Charts</h2>
     <div class="charts-grid">
       <div class="chart-box chart-wide">
-        <h3>Distance raced per episode</h3>
+        <h3>Distance per attempt (m) — coloured by result</h3>
         <canvas id="distChart"></canvas>
       </div>
       <div class="chart-box">
-        <h3>Lap time per episode</h3>
+        <h3>Lap time per attempt (s) — completed only</h3>
         <canvas id="lapChart"></canvas>
       </div>
       <div class="chart-box">
-        <h3>Mean speed per episode</h3>
+        <h3>Mean speed per attempt (km/h)</h3>
         <canvas id="speedChart"></canvas>
       </div>
       <div class="chart-box">
-        <h3>Max track position per episode</h3>
+        <h3>Max track position per attempt (%)</h3>
         <canvas id="tpChart"></canvas>
       </div>
       <div class="chart-box">
@@ -440,14 +447,14 @@ tr:hover td {{ background: var(--surface-off); }}
   </div>
 
   <div class="section">
-    <h2>Episode Breakdown</h2>
+    <h2>Attempt Breakdown</h2>
     <div class="table-wrap">
       <table>
         <thead>
           <tr>
-            <th>#</th>
+            <th>Attempt</th>
             <th>Distance (m)</th>
-            <th>Lap</th>
+            <th>Lap #</th>
             <th>Lap time (s)</th>
             <th>Mean spd</th>
             <th>Max spd</th>
@@ -464,7 +471,7 @@ tr:hover td {{ background: var(--surface-off); }}
   </div>
 
   <div class="report-footer">
-    Generated by eval/evaluate.py &nbsp;·&nbsp; University of Sheffield &nbsp;·&nbsp; Chart.js 4.4.4 (offline)
+    Generated by eval/evaluate.py &nbsp;·&nbsp; Chart.js 4.4.4 (offline)
   </div>
 
 </div>
@@ -472,7 +479,8 @@ tr:hover td {{ background: var(--surface-off); }}
 <script>{chartjs_src}</script>
 <script>
 const PURPLE = 'rgb(68,0,153)';
-const PURPLE_A = 'rgba(68,0,153,0.15)';
+const NEUTRAL = '#7c6fa0';
+const NEUTRAL_A = 'rgba(124,111,160,0.18)';
 const LABELS   = {ep_labels};
 const LAP_T    = {lap_times};
 const LAP_COL  = {lap_colours};
@@ -513,8 +521,8 @@ new Chart(document.getElementById('lapChart'), {{
 new Chart(document.getElementById('speedChart'), {{
   type: 'line',
   data: {{ labels: LABELS, datasets: [{{
-    data: SPEEDS, borderColor: PURPLE, backgroundColor: PURPLE_A,
-    fill: true, tension: 0.3, pointRadius: 4, pointBackgroundColor: PURPLE,
+    data: SPEEDS, borderColor: NEUTRAL, backgroundColor: NEUTRAL_A,
+    fill: true, tension: 0.3, pointRadius: 4, pointBackgroundColor: NEUTRAL,
   }}] }},
   options: {{ ...base('km/h') }},
 }});
