@@ -1,24 +1,46 @@
 """
 Live evaluation dashboard server.
 
-Starts a Flask server in a background thread. evaluate.py pushes episode
-results as they complete; the browser page polls /data every 3 seconds and
-redraws the charts live.
+Starts a Flask server in a background thread. evaluate.py pushes results
+as they complete; the browser polls /data every 3 s and redraws live.
 
-The server stays up after eval finishes (showing a "Run complete" banner)
-until you press Ctrl+C in the terminal.
+The server stays up after eval finishes until you press Ctrl+C.
 """
 
 from __future__ import annotations
 
+import base64
 import threading
 from pathlib import Path
 from typing import Any
 
+_VENDOR = Path(__file__).parent / "vendor"
+
 
 def _chartjs() -> str:
-    vendor = Path(__file__).parent / "vendor" / "chart.min.js"
-    return vendor.read_text(encoding="utf-8")
+    return (_VENDOR / "chart.min.js").read_text(encoding="utf-8")
+
+
+def _font_face_css() -> str:
+    def _b64(name: str) -> str:
+        return base64.b64encode((_VENDOR / name).read_bytes()).decode()
+
+    return f"""
+@font-face {{
+  font-family: 'Barlow Condensed';
+  font-style: normal; font-weight: 400;
+  src: url('data:font/woff2;base64,{_b64("barlow-400.woff2")}') format('woff2');
+}}
+@font-face {{
+  font-family: 'Barlow Condensed';
+  font-style: normal; font-weight: 600;
+  src: url('data:font/woff2;base64,{_b64("barlow-600.woff2")}') format('woff2');
+}}
+@font-face {{
+  font-family: 'Barlow Condensed';
+  font-style: normal; font-weight: 700;
+  src: url('data:font/woff2;base64,{_b64("barlow-700.woff2")}') format('woff2');
+}}"""
 
 
 _DASHBOARD_HTML = """<!DOCTYPE html>
@@ -27,46 +49,158 @@ _DASHBOARD_HTML = """<!DOCTYPE html>
 <meta charset="UTF-8">
 <title>Live Eval — {checkpoint}</title>
 <style>
-  *, *::before, *::after {{ box-sizing: border-box; margin: 0; padding: 0; }}
-  body {{ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
-          font-size: 14px; color: #1e293b; background: #0f172a; padding: 1.5rem; }}
-  .page {{ max-width: 960px; margin: 0 auto; }}
+{font_css}
 
-  h1 {{ color: #f1f5f9; font-size: 1.1rem; font-weight: 600; margin-bottom: .25rem; }}
-  .sub {{ color: #64748b; font-size: .82rem; margin-bottom: 1.5rem; }}
+:root {{
+  --purple:       rgb(68, 0, 153);
+  --purple-light: rgb(108, 40, 213);
+  --purple-dim:   rgba(68, 0, 153, 0.25);
+  --surface:      #0c0818;
+  --surface-card: #130f24;
+  --surface-mid:  #1a1535;
+  --border:       rgba(255,255,255,.07);
+  --text:         #f0eef8;
+  --text-mid:     #8c84b0;
+  --text-soft:    #564e78;
+  --green:  #22c55e;
+  --amber:  #f59e0b;
+  --red:    #ef4444;
+  --grey:   #94a3b8;
+}}
 
-  .prog-wrap {{ background: #1e293b; border-radius: 99px; height: 10px; margin-bottom: 1.25rem; overflow: hidden; }}
-  .prog-bar  {{ height: 100%; background: #3b82f6; border-radius: 99px;
-                transition: width .4s ease; width: 0%; }}
+*, *::before, *::after {{ box-sizing: border-box; margin: 0; padding: 0; }}
 
-  .status {{ font-size: .85rem; color: #94a3b8; margin-bottom: 1.5rem; }}
-  .status .complete {{ color: #22c55e; font-weight: 600; }}
+body {{
+  font-family: 'Barlow Condensed', 'Arial Narrow', Arial, sans-serif;
+  font-size: 15px;
+  font-weight: 400;
+  color: var(--text);
+  background: var(--surface);
+  padding: 0;
+  font-variant-numeric: tabular-nums;
+}}
 
-  .last-card {{ background: #1e293b; border-radius: 6px; padding: 1rem 1.25rem;
-                margin-bottom: 1.5rem; display: flex; flex-wrap: wrap; gap: .5rem 2rem; }}
-  .last-card .kv {{ font-size: .83rem; }}
-  .last-card .kv .k {{ color: #64748b; }}
-  .last-card .kv .v {{ color: #f1f5f9; font-weight: 600; }}
+/* ── Top bar ── */
+.topbar {{
+  background: var(--purple);
+  padding: .7rem 2rem;
+  display: flex;
+  align-items: baseline;
+  gap: 1.5rem;
+}}
+.topbar .label {{
+  font-size: .68rem;
+  font-weight: 700;
+  letter-spacing: .14em;
+  text-transform: uppercase;
+  color: rgba(255,255,255,.55);
+}}
+.topbar .name {{
+  font-size: 1rem;
+  font-weight: 700;
+  color: #fff;
+  letter-spacing: .02em;
+}}
+.topbar .ep-count {{
+  margin-left: auto;
+  font-size: .8rem;
+  font-weight: 600;
+  color: rgba(255,255,255,.7);
+  letter-spacing: .06em;
+  text-transform: uppercase;
+}}
 
-  .charts-row {{ display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }}
-  .chart-box {{ background: #1e293b; border-radius: 6px; padding: 1rem 1.25rem; }}
-  .chart-box h3 {{ font-size: .75rem; text-transform: uppercase; letter-spacing: .05em;
-                   color: #64748b; margin-bottom: .75rem; }}
-  canvas {{ max-height: 220px; }}
+/* ── Progress ── */
+.prog-wrap {{
+  height: 4px;
+  background: var(--surface-mid);
+}}
+.prog-bar {{
+  height: 100%;
+  background: var(--purple-light);
+  width: 0%;
+  transition: width .4s ease;
+  box-shadow: 0 0 12px rgba(108,40,213,.6);
+}}
 
-  .dot {{ display: inline-block; width: 8px; height: 8px; border-radius: 50%;
-          vertical-align: middle; margin-right: 3px; }}
+/* ── Body ── */
+.body {{ padding: 1.5rem 2rem; max-width: 1000px; margin: 0 auto; }}
+
+/* ── Status ── */
+.status {{
+  font-size: .72rem;
+  font-weight: 700;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+  color: var(--text-soft);
+  margin-bottom: 1.25rem;
+}}
+.status .complete {{ color: var(--green); }}
+
+/* ── Last episode card ── */
+.last-card {{
+  display: none;
+  background: var(--surface-card);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--purple);
+  padding: 1rem 1.25rem;
+  margin-bottom: 1.5rem;
+  flex-wrap: wrap;
+  gap: .4rem 2rem;
+}}
+.kv .k {{
+  font-size: .65rem;
+  font-weight: 700;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+  color: var(--text-soft);
+  margin-bottom: .15rem;
+}}
+.kv .v {{
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: var(--text);
+}}
+
+/* ── Charts ── */
+.charts-row {{
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1px;
+  background: var(--border);
+  border: 1px solid var(--border);
+}}
+.chart-box {{
+  background: var(--surface-card);
+  padding: 1.1rem 1.25rem;
+}}
+.chart-box h3 {{
+  font-size: .65rem;
+  font-weight: 700;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+  color: var(--text-soft);
+  margin-bottom: .75rem;
+}}
+canvas {{ max-height: 220px; }}
+
+.dot {{ display: inline-block; width: 7px; height: 7px; border-radius: 50%;
+        vertical-align: middle; margin-right: 3px; }}
 </style>
 </head>
 <body>
-<div class="page">
-  <h1>Live Evaluation &nbsp;<span style="color:#64748b;font-weight:400">— {checkpoint}</span></h1>
-  <div class="sub">{total} episodes &nbsp;·&nbsp; updates every 3 s</div>
 
-  <div class="prog-wrap"><div class="prog-bar" id="bar"></div></div>
+<div class="topbar">
+  <span class="label">Live Eval</span>
+  <span class="name">{checkpoint}</span>
+  <span class="ep-count" id="epCount">0 / {total}</span>
+</div>
+<div class="prog-wrap"><div class="prog-bar" id="bar"></div></div>
+
+<div class="body">
   <div class="status" id="status">Waiting for first episode…</div>
 
-  <div class="last-card" id="last" style="display:none">
+  <div class="last-card" id="last">
     <div class="kv"><div class="k">Episode</div><div class="v" id="lEp">—</div></div>
     <div class="kv"><div class="k">Distance</div><div class="v" id="lDist">—</div></div>
     <div class="kv"><div class="k">Lap time</div><div class="v" id="lLap">—</div></div>
@@ -76,94 +210,87 @@ _DASHBOARD_HTML = """<!DOCTYPE html>
   </div>
 
   <div class="charts-row">
-    <div class="chart-box">
-      <h3>Distance raced (m)</h3>
-      <canvas id="distChart"></canvas>
-    </div>
-    <div class="chart-box">
-      <h3>Mean speed (km/h)</h3>
-      <canvas id="speedChart"></canvas>
-    </div>
+    <div class="chart-box"><h3>Distance raced (m)</h3><canvas id="distChart"></canvas></div>
+    <div class="chart-box"><h3>Mean speed (km/h)</h3><canvas id="speedChart"></canvas></div>
   </div>
 </div>
 
 <script>{chartjs_src}</script>
 <script>
-const TOTAL = {total};
-const REASON_COL = {{
-  lap_complete: '#22c55e',
-  timeout:      '#f59e0b',
-  off_track:    '#ef4444',
-}};
-function col(r) {{ return REASON_COL[r] || '#94a3b8'; }}
+const TOTAL  = {total};
+const PURPLE = 'rgb(68,0,153)';
+const PURPLE_L = 'rgb(108,40,213)';
+const PURPLE_A = 'rgba(68,0,153,0.3)';
+const RC = {{ lap_complete:'#22c55e', timeout:'#f59e0b', off_track:'#ef4444' }};
+const col = r => RC[r] || '#94a3b8';
 
 const chartOpts = (ylabel) => ({{
   responsive: true, maintainAspectRatio: true,
   plugins: {{ legend: {{ display: false }} }},
   scales: {{
-    y: {{ ticks: {{ color: '#94a3b8' }}, grid: {{ color: '#1e293b' }},
-         title: {{ display: true, text: ylabel, color: '#64748b' }} }},
-    x: {{ ticks: {{ color: '#94a3b8' }}, grid: {{ color: '#334155' }} }}
-  }}
+    y: {{
+      grid: {{ color: 'rgba(255,255,255,.04)' }},
+      ticks: {{ color: '#564e78', font: {{ family: "'Barlow Condensed',Arial", size: 12 }} }},
+      title: {{ display: true, text: ylabel, color: '#564e78',
+                font: {{ family: "'Barlow Condensed',Arial", size: 11, weight: '700' }} }},
+    }},
+    x: {{
+      grid: {{ display: false }},
+      ticks: {{ color: '#564e78', font: {{ family: "'Barlow Condensed',Arial", size: 12 }} }},
+    }},
+  }},
 }});
 
 const distChart = new Chart(document.getElementById('distChart'), {{
   type: 'bar',
-  data: {{ labels: [], datasets: [{{ data: [], backgroundColor: [], borderRadius: 3 }}] }},
+  data: {{ labels: [], datasets: [{{ data: [], backgroundColor: [], borderRadius: 0, borderSkipped: false }}] }},
   options: chartOpts('metres'),
 }});
-
 const speedChart = new Chart(document.getElementById('speedChart'), {{
   type: 'line',
   data: {{ labels: [], datasets: [{{
-    data: [], borderColor: '#3b82f6',
-    backgroundColor: 'rgba(59,130,246,.15)', fill: true, tension: 0.3, pointRadius: 4,
+    data: [], borderColor: PURPLE_L, backgroundColor: PURPLE_A,
+    fill: true, tension: 0.3, pointRadius: 4, pointBackgroundColor: PURPLE_L,
   }}] }},
   options: chartOpts('km/h'),
 }});
 
 async function poll() {{
   try {{
-    const r = await fetch('/data');
-    const d = await r.json();
-    const eps = d.results;
-    const n   = eps.length;
+    const d = await (await fetch('/data')).json();
+    const eps = d.results, n = eps.length;
+
+    document.getElementById('bar').style.width = (n / TOTAL * 100) + '%';
+    document.getElementById('epCount').textContent = n + ' / ' + TOTAL;
+
+    const st = document.getElementById('status');
+    if (d.complete) st.innerHTML = '<span class="complete">RUN COMPLETE</span> — ' + n + ' episodes';
+    else st.textContent = n + ' / ' + TOTAL + ' EPISODES COMPLETED';
 
     if (n > 0) {{
-      document.getElementById('bar').style.width = (n / TOTAL * 100) + '%';
-
-      const statusEl = document.getElementById('status');
-      if (d.complete) {{
-        statusEl.innerHTML = '<span class="complete">Run complete</span> — ' + n + '/' + TOTAL + ' episodes finished.';
-      }} else {{
-        statusEl.textContent = n + ' / ' + TOTAL + ' episodes completed…';
-      }}
-
-      const last = eps[n - 1];
+      const last = eps[n-1];
       document.getElementById('last').style.display = 'flex';
       document.getElementById('lEp').textContent   = n;
       document.getElementById('lDist').textContent = last.dist_raced_m.toFixed(0) + ' m';
       document.getElementById('lLap').textContent  = last.lap_time ? last.lap_time.toFixed(2) + ' s' : '—';
       document.getElementById('lSpd').textContent  = last.mean_speed_kmh.toFixed(1) + ' km/h';
       document.getElementById('lTp').textContent   = (last.max_abs_track_pos * 100).toFixed(1) + '%';
-      const dot = '<span class="dot" style="background:' + col(last.termination_reason) + '"></span>';
-      document.getElementById('lReason').innerHTML = dot + last.termination_reason;
+      document.getElementById('lReason').innerHTML =
+        '<span class="dot" style="background:' + col(last.termination_reason) + '"></span>' +
+        last.termination_reason;
 
-      const labels = eps.map((_, i) => 'Ep ' + (i + 1));
-      distChart.data.labels  = labels;
+      const labels = eps.map((_, i) => 'Ep ' + (i+1));
+      distChart.data.labels = labels;
       distChart.data.datasets[0].data            = eps.map(e => e.dist_raced_m);
       distChart.data.datasets[0].backgroundColor = eps.map(e => col(e.termination_reason));
       distChart.update('none');
-
       speedChart.data.labels = labels;
       speedChart.data.datasets[0].data = eps.map(e => e.mean_speed_kmh);
       speedChart.update('none');
     }}
 
     setTimeout(poll, d.complete ? 10000 : 3000);
-  }} catch(e) {{
-    setTimeout(poll, 5000);
-  }}
+  }} catch(e) {{ setTimeout(poll, 5000); }}
 }}
 poll();
 </script>
@@ -194,6 +321,7 @@ class EvalServer:
         app.logger.disabled = True
 
         dashboard = _DASHBOARD_HTML.format(
+            font_css=_font_face_css(),
             chartjs_src=_chartjs(),
             checkpoint=self._checkpoint,
             total=self._total,
@@ -223,11 +351,8 @@ class EvalServer:
             self._complete = True
 
     def start(self) -> None:
-        """Start Flask in a daemon background thread, bound to all interfaces."""
         import logging
-        log = logging.getLogger("werkzeug")
-        log.setLevel(logging.ERROR)
-
+        logging.getLogger("werkzeug").setLevel(logging.ERROR)
         t = threading.Thread(
             target=self._app.run,
             kwargs={"host": "0.0.0.0", "port": self._port, "use_reloader": False, "debug": False},
