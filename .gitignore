@@ -246,3 +246,11 @@ cython_debug/
 
 torcs
 !/gym_torcs/.env
+
+# Eval outputs (timestamped artifacts)
+results/eval_*.json
+results/eval_*.html
+results/lap_debug_*.jsonl
+
+# Runtime debug traces
+SACPID/.cursor/debug-*.log

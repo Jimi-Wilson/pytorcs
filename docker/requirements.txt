@@ -1,0 +1,4 @@
+numpy
+gymnasium
+python-dotenv
+stable-baselines3
