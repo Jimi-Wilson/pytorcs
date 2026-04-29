@@ -94,13 +94,15 @@ def load_ppo(
     checkpoint: str,
     port: int = 3001,
     policy_action_dim: int = 3,
+    torcs_host: str = "localhost",
 ) -> tuple[Any, Any]:
     """Load a PPO checkpoint and create the environment.
 
     Returns (model, env). Caller must call env.close() when done.
     """
-    # snakeoil3 parses sys.argv via getopt; clear args so our flags don't leak
-    sys.argv = [sys.argv[0]]
+    # snakeoil3 reads --host from sys.argv in every Client.__init__ (called each env.reset()).
+    # Set it here once; the value persists for the lifetime of the process.
+    sys.argv = [sys.argv[0], "--host", torcs_host]
 
     try:
         from stable_baselines3 import PPO

@@ -179,6 +179,8 @@ def parse_args() -> argparse.Namespace:
     # Advanced / rarely needed
     parser.add_argument("--port", type=int, default=3001,
                         help=argparse.SUPPRESS)
+    parser.add_argument("--torcs-host", default="localhost",
+                        help=argparse.SUPPRESS)
     parser.add_argument("--policy-action-dim", type=int, default=3, choices=[2, 3],
                         help=argparse.SUPPRESS)
     return parser.parse_args()
@@ -202,6 +204,7 @@ def main() -> None:
         args.checkpoint,
         port=args.port,
         policy_action_dim=args.policy_action_dim,
+        torcs_host=args.torcs_host,
     )
 
     # ── Live server ──────────────────────────────────────────────────────────
@@ -264,10 +267,9 @@ def main() -> None:
                       f"  Try:  lsof -i :{args.serve_port}  to see what is using it.\n", flush=True)
 
     # ── Episode loop ─────────────────────────────────────────────────────────
-    print(f"Running {args.episodes} episode(s)…  (TORCS must be running)\n")
-
     try:
         from rich.progress import Progress, SpinnerColumn, BarColumn, TaskProgressColumn, TimeElapsedColumn
+        from rich.console import Console as RichConsole
         _rich = True
     except ImportError:
         _rich = False
@@ -286,13 +288,20 @@ def main() -> None:
             print(f"done  {result.termination_reason}  {lap_str}  {result.dist_raced_m:.0f}m")
 
     if _rich and not args.verbose:
-        with Progress(SpinnerColumn(), "[progress.description]{task.description}",
-                      BarColumn(), TaskProgressColumn(), TimeElapsedColumn()) as progress:
-            task = progress.add_task("Evaluating", total=args.episodes)
-            for i in range(args.episodes):
-                _run_one(i)
+        console = RichConsole()
+        # First episode: show a spinner while waiting for the TORCS UDP handshake
+        with console.status(f"Connecting to TORCS ({args.torcs_host}:{args.port})…"):
+            _run_one(0)
+        if args.episodes > 1:
+            with Progress(SpinnerColumn(), "[progress.description]{task.description}",
+                          BarColumn(), TaskProgressColumn(), TimeElapsedColumn()) as progress:
+                task = progress.add_task("Evaluating", total=args.episodes)
                 progress.advance(task)
+                for i in range(1, args.episodes):
+                    _run_one(i)
+                    progress.advance(task)
     else:
+        print(f"Connecting to TORCS ({args.torcs_host}:{args.port})…", flush=True)
         for i in range(args.episodes):
             _run_one(i)
 

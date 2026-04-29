@@ -13,7 +13,8 @@ services:
       ALSOFT_DRIVERS: "null"
       ALUT_DRIVER: "null"
       LIBGL_DRI3_DISABLE: "1"
-    ports:
-      - "3001:3001/udp"
+    # host networking: TORCS UDP port 3001 is directly on localhost — required for
+    # eval scripts running on the host (or in another --network=host container) to connect.
+    network_mode: host
     stdin_open: true
     tty: true
