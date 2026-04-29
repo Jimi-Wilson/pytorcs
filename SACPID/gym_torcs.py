@@ -197,7 +197,7 @@ class TorcsEnv:
 
         # TORCS SCR sent ***restart***/***shutdown*** or hit server limits: snakeoil closed the UDP socket.
         if client.so is None:
-            info = {"termination_reason": "snakeoil_disconnected"}
+            info = {"termination_reason": "snakeoil_disconnected_recoverable"}
             if os.environ.get("TORCS_VERBOSE_TERMINATION", "0") == "1":
                 print(
                     "--> episode terminated: SCR socket closed (TORCS restart/shutdown or server limit); "
@@ -306,7 +306,15 @@ class TorcsEnv:
             },
         )
         # #endregion
-        self.client = snakeoil3.Client(p=self.port, vision=self.vision)  # Open new UDP in vtorcs
+        try:
+            self.client = snakeoil3.Client(
+                p=self.port,
+                vision=self.vision,
+                reconnect_timeout_s=os.environ.get("TORCS_RECONNECT_TIMEOUT_S", "10.0"),
+                enforce_reconnect_timeout=not first_connect_reset,
+            )  # Open new UDP in vtorcs
+        except snakeoil3.TorcsReconnectTimeout as exc:
+            raise RuntimeError(f"race_finished_reconnect_timeout: {exc}") from exc
         # snakeoil uses attribute maxSteps (not MAX_STEPS); keep high to avoid misleading shutdown prints / limits
         self.client.maxSteps = 10**12
         # #region agent log

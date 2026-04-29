@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import contextlib
 import io
+import json
 import math
 import sys
 from dataclasses import asdict, dataclass
@@ -88,6 +89,13 @@ def _std(values: list[float]) -> float:
     return math.sqrt(sum((v - m) ** 2 for v in values) / len(values))
 
 
+def _safe_float(value: Any, default: float = 0.0) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
 # ---------------------------------------------------------------------------
 # Model loader
 # ---------------------------------------------------------------------------
@@ -147,6 +155,10 @@ def run_episode(
     verbose: bool = False,
     seed: int | None = None,
     step_callback: Any = None,
+    lap_callback: Any = None,
+    should_stop: Any = None,
+    lap_debug: bool = False,
+    lap_debug_writer: Any = None,
 ) -> EpisodeResult:
     """Run one episode and return collected race statistics.
 
@@ -161,10 +173,17 @@ def run_episode(
     off_track_events = 0
     prev_off_track = False
 
-    # Lap detection via SCR lastLapTime field — TORCS updates this each time the
-    # car crosses the start/finish line; we watch for changes to count laps.
+    # Robust lap detection:
+    # - Primary signal: lastLapTime changed from previous step.
+    # - Secondary corroboration: curLapTime reset near zero + distFromStart wrap.
+    # - Debounce with a cooldown to avoid duplicate counts from sensor jitter.
     lap_times_list: list[float] = []
-    prev_last_lap = 0.0
+    prev_last_lap_read = 0.0
+    prev_cur_lap_read = 0.0
+    prev_dist_from_start: float | None = None
+    last_lap_step = -10_000
+    lap_cooldown_steps = 20
+    stopped_early = False
 
     # REWARD_REMOVED — uncomment to restore reward monitoring
     # total_reward = 0.0
@@ -199,14 +218,92 @@ def run_episode(
 
         dist = float(tele.get("dist_raced_m", 0.0))
 
-        # Check SCR lastLapTime — non-zero and changed means a lap was just completed
+        sensor_dict: dict[str, Any] = {}
         try:
-            cur_last_lap = float(env._slot._env.client.S.d.get("lastLapTime", 0.0))
+            sensor_dict = dict(env._slot._env.client.S.d)
         except (AttributeError, KeyError, TypeError):
-            cur_last_lap = 0.0
-        if cur_last_lap > 0.0 and cur_last_lap != prev_last_lap:
-            lap_times_list.append(cur_last_lap)
-            prev_last_lap = cur_last_lap
+            sensor_dict = {}
+
+        raw_last_lap = sensor_dict.get("lastLapTime")
+        raw_cur_lap = sensor_dict.get("curLapTime")
+        raw_dist_from_start = sensor_dict.get("distFromStart")
+        tele_last_lap = tele.get("last_lap_time_s", 0.0)
+        tele_cur_lap = tele.get("cur_lap_time_s", 0.0)
+        tele_dist_from_start = tele.get("dist_from_start_m", 0.0)
+
+        cur_last_lap = _safe_float(raw_last_lap if raw_last_lap is not None else tele_last_lap, 0.0)
+        cur_lap_time = _safe_float(raw_cur_lap if raw_cur_lap is not None else tele_cur_lap, 0.0)
+        dist_from_start = _safe_float(
+            raw_dist_from_start if raw_dist_from_start is not None else tele_dist_from_start, 0.0
+        )
+
+        lastlap_changed = cur_last_lap > 1.0 and abs(cur_last_lap - prev_last_lap_read) > 1e-3
+        curlap_reset = prev_cur_lap_read > 2.0 and 0.0 <= cur_lap_time < 0.35
+        dist_wrapped = (
+            prev_dist_from_start is not None
+            and prev_dist_from_start > 100.0
+            and dist_from_start >= 0.0
+            and (prev_dist_from_start - dist_from_start) > 200.0
+        )
+
+        lap_event = lastlap_changed or (curlap_reset and dist_wrapped)
+        cooldown_blocked = False
+        lap_counted = False
+        if lap_event and (step_count - last_lap_step) > lap_cooldown_steps:
+            lap_value = None
+            if cur_last_lap > 1.0:
+                lap_times_list.append(cur_last_lap)
+                lap_value = cur_last_lap
+            elif prev_cur_lap_read > 1.0:
+                # Fallback if lastLapTime is delayed or missing at the crossing step.
+                lap_times_list.append(prev_cur_lap_read)
+                lap_value = prev_cur_lap_read
+            last_lap_step = step_count
+            lap_counted = True
+            if lap_callback is not None and lap_value is not None:
+                try:
+                    lap_callback(lap_value)
+                except Exception:
+                    pass
+        elif lap_event:
+            cooldown_blocked = True
+
+        if lap_debug and lap_debug_writer is not None:
+            lap_debug_writer(
+                json.dumps(
+                    {
+                        "step": step_count,
+                        "laps_in_attempt": len(lap_times_list),
+                        "lap_counted": lap_counted,
+                        "lap_event": lap_event,
+                        "cooldown_blocked": cooldown_blocked,
+                        "lastlap_changed": lastlap_changed,
+                        "curlap_reset": curlap_reset,
+                        "dist_wrapped": dist_wrapped,
+                        "raw_has_lastLapTime": raw_last_lap is not None,
+                        "raw_has_curLapTime": raw_cur_lap is not None,
+                        "raw_has_distFromStart": raw_dist_from_start is not None,
+                        "raw_lastLapTime": raw_last_lap,
+                        "raw_curLapTime": raw_cur_lap,
+                        "raw_distFromStart": raw_dist_from_start,
+                        "tele_last_lap_time_s": tele_last_lap,
+                        "tele_cur_lap_time_s": tele_cur_lap,
+                        "tele_dist_from_start_m": tele_dist_from_start,
+                        "chosen_last_lap": cur_last_lap,
+                        "chosen_cur_lap": cur_lap_time,
+                        "chosen_dist_from_start": dist_from_start,
+                        "prev_last_lap": prev_last_lap_read,
+                        "prev_cur_lap": prev_cur_lap_read,
+                        "prev_dist_from_start": prev_dist_from_start,
+                        "termination_reason": str(info.get("termination_reason", "")),
+                    },
+                    ensure_ascii=True,
+                )
+            )
+
+        prev_last_lap_read = cur_last_lap
+        prev_cur_lap_read = cur_lap_time
+        prev_dist_from_start = dist_from_start
 
         if step_callback is not None:
             step_callback({
@@ -215,6 +312,9 @@ def run_episode(
                 "track_pos": round(float(track_pos), 4) if track_pos is not None else 0.0,
                 "dist":      round(dist, 1),
                 "step":      step_count,
+                "laps_in_attempt": len(lap_times_list),
+                "cur_lap_time": round(cur_lap_time, 3),
+                "last_lap_time": round(cur_last_lap, 3) if cur_last_lap > 0.0 else 0.0,
             })
 
         if verbose:
@@ -223,8 +323,17 @@ def run_episode(
 
         if bool(terminated) or bool(truncated):
             break
+        if should_stop is not None:
+            try:
+                if bool(should_stop()):
+                    stopped_early = True
+                    break
+            except Exception:
+                pass
 
     reason = str(info.get("termination_reason", "unknown"))
+    if stopped_early and reason in ("unknown", "", "none"):
+        reason = "target_laps_reached"
     dist_m = float(info.get("sacpid_dist_raced_m", 0.0))
     laps_in_attempt = len(lap_times_list)
     lap_completed   = laps_in_attempt > 0

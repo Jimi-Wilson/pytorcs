@@ -19,6 +19,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import os
 import subprocess
 import sys
 import time
@@ -204,6 +205,12 @@ def parse_args() -> argparse.Namespace:
                         help="Do not open a browser (useful in Docker / headless environments).")
     parser.add_argument("--no-report", action="store_true",
                         help="Skip HTML report generation.")
+    parser.add_argument("--reconnect-timeout-s", type=float, default=10.0,
+                        help="After first connection, reconnect wait above this is treated as race finished.")
+    parser.add_argument("--lap-debug", action="store_true",
+                        help="Write per-step lap detection debug logs to JSONL file.")
+    parser.add_argument("--lap-debug-file", default=None,
+                        help="Path for lap debug JSONL file (default: results/lap_debug_<timestamp>.jsonl).")
     # Advanced / rarely needed
     parser.add_argument("--port", type=int, default=3001,
                         help=argparse.SUPPRESS)
@@ -268,7 +275,105 @@ def main() -> None:
     sys.path.insert(0, str(Path(__file__).parent))
     from runner import load_ppo, run_episode
 
+    os.environ["TORCS_RECONNECT_TIMEOUT_S"] = str(args.reconnect_timeout_s)
+
     print(f"Loading checkpoint: {args.checkpoint}")
+    model = None
+    env = None
+
+    # ── Live server ──────────────────────────────────────────────────────────
+    srv = None
+
+    # ── Laps loop ────────────────────────────────────────────────────────────
+    print(f"Target: {target_laps} completed laps  (max {max_attempts} attempts)  "
+          f"— TORCS must be running\n")
+
+    attempts: list[Any] = []
+    laps_completed = 0
+    attempt_count  = 0
+    interrupted    = False
+    race_finished_due_to_timeout = False
+    progress_obj: Any = None
+    progress_task: Any = None
+    lap_debug_path: Path | None = None
+    lap_debug_fp: Any = None
+
+    if args.lap_debug:
+        if args.lap_debug_file:
+            lap_debug_path = Path(args.lap_debug_file)
+        else:
+            ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+            lap_debug_path = Path("results") / f"lap_debug_{ts}.jsonl"
+        lap_debug_path.parent.mkdir(parents=True, exist_ok=True)
+        lap_debug_fp = lap_debug_path.open("a", encoding="utf-8")
+        print(f"[lap-debug] writing lap diagnostics to: {lap_debug_path}")
+
+    def _record_lap(lap_time_s: float | None = None) -> None:
+        nonlocal laps_completed, progress_obj, progress_task
+        laps_completed += 1
+        if srv:
+            srv.push_lap_event(lap_time_s)
+        if progress_obj is not None and progress_task is not None:
+            progress_obj.update(
+                progress_task,
+                description=f"Laps: {laps_completed}/{target_laps}  Attempts: {attempt_count}",
+            )
+            progress_obj.advance(progress_task, 1)
+
+    def _run_one() -> None:
+        nonlocal laps_completed, attempt_count, race_finished_due_to_timeout
+        attempt_count += 1
+        laps_seen_live = 0
+
+        def _on_lap(lap_time_s: float) -> None:
+            nonlocal laps_seen_live
+            laps_seen_live += 1
+            _record_lap(lap_time_s)
+
+        seed = args.seed if attempt_count == 1 else None
+        if not _rich or args.verbose:
+            print(f"  Attempt {attempt_count}  (lap {laps_completed + 1}/{target_laps}) …",
+                  end=" ", flush=True)
+        try:
+            result = run_episode(
+                model,
+                env,
+                deterministic=True,
+                verbose=args.verbose,
+                seed=seed,
+                step_callback=srv.push_step if srv else None,
+                lap_callback=_on_lap,
+                should_stop=lambda: laps_completed >= target_laps,
+                lap_debug=bool(args.lap_debug),
+                lap_debug_writer=(lambda line: (lap_debug_fp.write(line + "\n"), lap_debug_fp.flush()))
+                if lap_debug_fp
+                else None,
+            )
+        except Exception as exc:
+            msg = str(exc)
+            if "race_finished_reconnect_timeout:" in msg:
+                race_finished_due_to_timeout = True
+                print(
+                    f"\n  Race finished: reconnect wait exceeded {args.reconnect_timeout_s:.1f}s "
+                    f"after prior connection. Writing report…"
+                )
+                return
+            print(f"\n  Attempt {attempt_count} failed: {exc}")
+            return
+        attempts.append(result)
+        if result.laps_in_attempt > laps_seen_live:
+            for _ in range(result.laps_in_attempt - laps_seen_live):
+                _record_lap(None)
+        if srv:
+            srv.push_result(result)
+        if not _rich or args.verbose:
+            if result.laps_in_attempt > 0 and result.lap_time:
+                lap_str = f"laps={result.laps_in_attempt} best={result.lap_time:.2f}s"
+            else:
+                lap_str = "no lap"
+            print(f"done  {result.termination_reason}  {lap_str}  {result.dist_raced_m:.0f}m"
+                  f"  [{laps_completed}/{target_laps} laps]")
+
     try:
         model, env = load_ppo(
             args.checkpoint,
@@ -279,105 +384,75 @@ def main() -> None:
     except (FileNotFoundError, RuntimeError) as exc:
         print(f"Error: {exc}", file=sys.stderr)
         sys.exit(1)
+    except KeyboardInterrupt:
+        print("\nInterrupted during setup.")
+        return
 
-    # ── Live server ──────────────────────────────────────────────────────────
-    srv = None
-    if args.serve:
-        import socket
-        print(f"[serve] importing EvalServer …", flush=True)
-        from server import EvalServer
+    try:
+        if args.serve:
+            import socket
+            print(f"[serve] importing EvalServer …", flush=True)
+            from server import EvalServer
 
-        try:
-            with socket.create_connection(("127.0.0.1", args.serve_port), timeout=0.3):
-                print(f"[serve] ERROR: port {args.serve_port} is already in use — "
-                      f"kill the process using it or choose a different port with --serve-port",
-                      flush=True)
-                args.serve = False
-        except OSError:
-            pass
-
-    if args.serve:
-        print(f"[serve] constructing EvalServer on port {args.serve_port} …", flush=True)
-        srv = EvalServer(
-            target_laps=target_laps,
-            max_attempts=max_attempts,
-            checkpoint=args.checkpoint,
-            port=args.serve_port,
-        )
-        print(f"[serve] starting Flask thread …", flush=True)
-        srv.start()
-
-        deadline = time.monotonic() + 10.0
-        poll_n   = 0
-        ready    = False
-        while time.monotonic() < deadline:
-            poll_n += 1
             try:
-                with socket.create_connection(("127.0.0.1", args.serve_port), timeout=0.2):
-                    ready = True
-                    print(f"[serve] port open after {poll_n} poll(s)", flush=True)
-                    break
-            except OSError as e:
-                if poll_n % 10 == 0:
-                    print(f"[serve] still waiting … (attempt {poll_n}, error: {e})", flush=True)
-                if getattr(srv, "_thread_error", []):
-                    print(f"[serve] thread error detected, aborting wait", flush=True)
-                    break
-                time.sleep(0.1)
+                with socket.create_connection(("127.0.0.1", args.serve_port), timeout=0.3):
+                    print(f"[serve] ERROR: port {args.serve_port} is already in use — "
+                          f"kill the process using it or choose a different port with --serve-port",
+                          flush=True)
+                    args.serve = False
+            except OSError:
+                pass
 
-        if ready:
-            print(f"\n  Live dashboard →  {srv.url}\n", flush=True)
-            if not args.no_browser:
-                _open_url_silently(srv.url)
-        else:
-            errors = getattr(srv, "_thread_error", [])
-            if errors:
-                print(f"\n  [serve] Flask failed to start: {errors[0]}\n", flush=True)
+        if args.serve:
+            print(f"[serve] constructing EvalServer on port {args.serve_port} …", flush=True)
+            srv = EvalServer(
+                target_laps=target_laps,
+                max_attempts=max_attempts,
+                checkpoint=args.checkpoint,
+                port=args.serve_port,
+            )
+            print(f"[serve] starting Flask thread …", flush=True)
+            srv.start()
+
+            deadline = time.monotonic() + 10.0
+            poll_n   = 0
+            ready    = False
+            while time.monotonic() < deadline:
+                poll_n += 1
+                try:
+                    with socket.create_connection(("127.0.0.1", args.serve_port), timeout=0.2):
+                        ready = True
+                        print(f"[serve] port open after {poll_n} poll(s)", flush=True)
+                        break
+                except OSError as e:
+                    if poll_n % 10 == 0:
+                        print(f"[serve] still waiting … (attempt {poll_n}, error: {e})", flush=True)
+                    if getattr(srv, "_thread_error", []):
+                        print(f"[serve] thread error detected, aborting wait", flush=True)
+                        break
+                    time.sleep(0.1)
+
+            if ready:
+                print(f"\n  Live dashboard →  {srv.url}\n", flush=True)
+                if not args.no_browser:
+                    _open_url_silently(srv.url)
             else:
-                print(f"\n  [serve] Timed out waiting for port {args.serve_port} after 10 s.\n"
-                      f"  Try:  lsof -i :{args.serve_port}  to see what is using it.\n", flush=True)
+                errors = getattr(srv, "_thread_error", [])
+                if errors:
+                    print(f"\n  [serve] Flask failed to start: {errors[0]}\n", flush=True)
+                else:
+                    print(f"\n  [serve] Timed out waiting for port {args.serve_port} after 10 s.\n"
+                          f"  Try:  lsof -i :{args.serve_port}  to see what is using it.\n", flush=True)
 
-    # ── Laps loop ────────────────────────────────────────────────────────────
-    print(f"Target: {target_laps} completed laps  (max {max_attempts} attempts)  "
-          f"— TORCS must be running\n")
-
-    try:
-        from rich.progress import (
-            Progress, SpinnerColumn, BarColumn, TaskProgressColumn,
-            TimeElapsedColumn, TextColumn,
-        )
-        _rich = True
-    except ImportError:
-        _rich = False
-
-    attempts: list[Any] = []
-    laps_completed = 0
-    attempt_count  = 0
-    interrupted    = False
-
-    def _run_one() -> None:
-        nonlocal laps_completed, attempt_count
-        attempt_count += 1
-        seed = args.seed if attempt_count == 1 else None
-        if not _rich or args.verbose:
-            print(f"  Attempt {attempt_count}  (lap {laps_completed + 1}/{target_laps}) …",
-                  end=" ", flush=True)
         try:
-            result = run_episode(model, env, deterministic=True, verbose=args.verbose, seed=seed,
-                                 step_callback=srv.push_step if srv else None)
-        except Exception as exc:
-            print(f"\n  Attempt {attempt_count} failed: {exc}")
-            return
-        attempts.append(result)
-        laps_completed += result.laps_in_attempt
-        if srv:
-            srv.push_result(result)
-        if not _rich or args.verbose:
-            lap_str = f"lap={result.lap_time:.2f}s" if result.lap_time else "no lap"
-            print(f"done  {result.termination_reason}  {lap_str}  {result.dist_raced_m:.0f}m"
-                  f"  [{laps_completed}/{target_laps} laps]")
+            from rich.progress import (
+                Progress, SpinnerColumn, BarColumn, TaskProgressColumn,
+                TimeElapsedColumn, TextColumn,
+            )
+            _rich = True
+        except ImportError:
+            _rich = False
 
-    try:
         if _rich and not args.verbose:
             with Progress(
                 SpinnerColumn(),
@@ -389,17 +464,26 @@ def main() -> None:
                 task = progress.add_task(
                     f"Laps: 0/{target_laps}  Attempts: 0", total=target_laps
                 )
-                while laps_completed < target_laps and attempt_count < max_attempts:
-                    prev = laps_completed
+                progress_obj = progress
+                progress_task = task
+                while (
+                    laps_completed < target_laps
+                    and attempt_count < max_attempts
+                    and not race_finished_due_to_timeout
+                ):
                     _run_one()
                     progress.update(
                         task,
                         description=f"Laps: {laps_completed}/{target_laps}  Attempts: {attempt_count}",
                     )
-                    if laps_completed > prev:
-                        progress.advance(task)
+                progress_obj = None
+                progress_task = None
         else:
-            while laps_completed < target_laps and attempt_count < max_attempts:
+            while (
+                laps_completed < target_laps
+                and attempt_count < max_attempts
+                and not race_finished_due_to_timeout
+            ):
                 _run_one()
     except KeyboardInterrupt:
         interrupted = True
@@ -407,7 +491,13 @@ def main() -> None:
               f" — saving partial results…")
     finally:
         try:
-            env.close()
+            if env:
+                env.close()
+        except Exception:
+            pass
+        try:
+            if lap_debug_fp:
+                lap_debug_fp.close()
         except Exception:
             pass
         if srv:
@@ -417,7 +507,11 @@ def main() -> None:
         print("No attempts completed — nothing to report.")
         return
 
-    if not interrupted and attempt_count >= max_attempts and laps_completed < target_laps:
+    if race_finished_due_to_timeout:
+        print(
+            f"  Race finished due to reconnect timeout (> {args.reconnect_timeout_s:.1f}s)."
+        )
+    elif not interrupted and attempt_count >= max_attempts and laps_completed < target_laps:
         print(f"  Max attempts ({max_attempts}) reached with {laps_completed}/{target_laps} laps completed.")
 
     # ── Build and write payload ───────────────────────────────────────────────

@@ -61,6 +61,10 @@ import time
 import json
 PI= 3.14159265359
 
+
+class TorcsReconnectTimeout(RuntimeError):
+    """Raised when post-connection reconnect wait exceeds configured threshold."""
+
 # #region agent log
 def _sacpid_scr_debug(hypothesis_id: str, location: str, message: str, data: dict) -> None:
     """Append one NDJSON line for SCR disconnect/restart diagnosis (debug session bea265)."""
@@ -141,7 +145,19 @@ def bargraph(x,mn,mx,w,c='X'):
     return '[%s]' % (nnc+npc+ppc+pnc)
 
 class Client():
-    def __init__(self,H=None,p=None,i=None,e=None,t=None,s=None,d=None,vision=False):
+    def __init__(
+        self,
+        H=None,
+        p=None,
+        i=None,
+        e=None,
+        t=None,
+        s=None,
+        d=None,
+        vision=False,
+        reconnect_timeout_s=None,
+        enforce_reconnect_timeout=False,
+    ):
         # If you don't like the option defaults,  change them here.
         self.vision = vision
 
@@ -163,9 +179,17 @@ class Client():
         if d: self.debug= d
         self.S= ServerState()
         self.R= DriverAction()
-        self.setup_connection()
+        self.reconnect_timeout_s = float(
+            reconnect_timeout_s
+            if reconnect_timeout_s is not None
+            else os.environ.get("TORCS_RECONNECT_TIMEOUT_S", "10.0")
+        )
+        self.enforce_reconnect_timeout = bool(enforce_reconnect_timeout)
+        self._last_connect_wait_s = 0.0
+        self._last_connect_timed_out = False
+        self.setup_connection(is_reconnect=self.enforce_reconnect_timeout)
 
-    def setup_connection(self):
+    def setup_connection(self, is_reconnect=False):
         # == Set Up UDP Socket ==
         try:
             self.so= socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -174,6 +198,9 @@ class Client():
             sys.exit(-1)
         # == Initialize Connection To Server ==
         self.so.settimeout(1)
+        t0 = time.monotonic()
+        waiting_logged = False
+        self._last_connect_timed_out = False
 
         while True:
             # This string establishes track sensor angles! You can customize them.
@@ -192,10 +219,21 @@ class Client():
                 sockdata,addr= self.so.recvfrom(data_size)
                 sockdata = sockdata.decode('utf-8')
             except socket.error as emsg:
-                print("Waiting for server on %d............" % self.port)
+                elapsed = time.monotonic() - t0
+                self._last_connect_wait_s = elapsed
+                if not waiting_logged:
+                    print("Waiting for server on %d............" % self.port)
+                    waiting_logged = True
+                if is_reconnect and elapsed > self.reconnect_timeout_s:
+                    self._last_connect_timed_out = True
+                    self.shutdown()
+                    raise TorcsReconnectTimeout(
+                        "Reconnect wait exceeded %.1fs on port %d" % (self.reconnect_timeout_s, self.port)
+                    )
 
             identify = '***identified***'
             if identify in sockdata:
+                self._last_connect_wait_s = time.monotonic() - t0
                 print("Client connected on %d.............." % self.port)
                 break
 
@@ -312,7 +350,7 @@ class Client():
                         % self.port
                     )
                     self.shutdown()
-                    self.setup_connection()
+                    self.setup_connection(is_reconnect=True)
                     consecutive_restart_signals = 0
                 continue
             elif not sockdata: # Empty?
