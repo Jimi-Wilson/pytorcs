@@ -1,74 +1,83 @@
 # Evaluation Guide
 
-This document covers how to run the evaluation engine (`eval/evaluate.py`) against a trained PPO checkpoint.
+Runs a trained PPO checkpoint against TORCS, collects race statistics, writes a JSON results file and a self-contained HTML report, and optionally serves a live dashboard while the run is in progress.
 
 ---
 
 ## Prerequisites
 
-1. **TORCS must be running** before you start the eval script. The script connects to TORCS over UDP and will hang indefinitely if no server is listening.
+1. **TORCS must be running** before the eval script starts — it connects over UDP and will hang if nothing is listening.
 
    ```bash
-   cd SACPID
-   ./autostart.sh 2      # launches TORCS on the Corkscrew track
+   cd SACPID && ./autostart.sh 2
    ```
 
-2. **Python dependencies** — install from the SACPID requirements file:
+2. **Python dependencies:**
 
    ```bash
-   pip install -r SACPID/requirements.txt
-   ```
-
-3. **Flask** — only needed for the live dashboard (`--serve`):
-
-   ```bash
-   pip install flask
+   # CPU-only (recommended — no CUDA required for eval)
+   pip install torch==2.5.1 --index-url https://download.pytorch.org/whl/cpu
+   pip install -r eval/requirements.txt
    ```
 
 ---
 
-## Basic Usage
+## Basic usage
 
 ```bash
-python eval/evaluate.py \
-  --checkpoint SACPID/logs/ppo/stage4 \
-  --episodes 10
+python eval/evaluate.py --checkpoint /path/to/model.zip --episodes 10
 ```
 
 This will:
-- Run 10 episodes using the most recent `.zip` checkpoint found under `SACPID/logs/ppo/stage4`
-- Print a Rich summary table to the terminal when all episodes finish
+- Run 10 episodes using the checkpoint
+- Print a summary table to the terminal when all episodes finish
 - Write results to `results/eval_<timestamp>.json`
 - Write a self-contained HTML report to `results/eval_<timestamp>.html`
 
 ---
 
-## All Flags
+## Checkpoint path resolution
+
+`--checkpoint` accepts:
+
+- A direct `.zip` file: `/path/to/best_model.zip`
+- A directory with a `latest_model_path.txt` marker (written by the training script)
+- Any directory — the most recently modified `.zip` is used
+
+---
+
+## Flags
 
 | Flag | Default | Description |
 |---|---|---|
-| `--checkpoint` / `-c` | *(required)* | Path to a `.zip` checkpoint file, or a directory containing one |
-| `--model-type` | `ppo` | `ppo` or `sacpid` (SACPID support coming soon) |
+| `--checkpoint` / `-c` | *(required)* | Path to a `.zip` checkpoint or directory |
 | `--episodes` | `10` | Number of episodes to run |
-| `--seed` | `42` | Passed to `env.reset()` (TORCS ignores it; recorded in metadata) |
+| `--seed` | `42` | Recorded in metadata for reproducibility |
 | `--output` | `results/eval_<timestamp>.json` | Where to write the JSON results file |
-| `--stage` | `4` | Curriculum stage (1–5); sets env reward/cost limits |
-| `--port` | `3001` | TORCS SCR UDP port |
-| `--policy-action-dim` | `3` | Action dimensions: `2` = [steer, accel], `3` = [steer, accel, brake] |
 | `--verbose` | off | Print per-step telemetry (speed, distance, track position) |
-| `--serve` | off | Start live dashboard server and open browser automatically |
+| `--serve` | off | Start live dashboard server |
 | `--serve-port` | `5001` | Port for the live dashboard |
+| `--no-browser` | off | Do not auto-open a browser (use in Docker / headless environments) |
 | `--no-report` | off | Skip HTML report generation |
 
 ---
 
-## Checkpoint Path Resolution
+## Race statistics collected
 
-The `--checkpoint` flag accepts:
+**Per episode:**
+- Distance raced (m)
+- Lap completed (yes/no) and lap time (s)
+- Mean, max, and min speed (km/h)
+- Max track position — worst lateral excursion (0 = centreline, 1 = edge)
+- Mean track position — average centering quality (lower = better)
+- Steering smoothness — standard deviation of steer actions (lower = smoother)
+- Off-track events — count of excursions beyond the track boundary
+- Termination reason (`lap_complete`, `timeout`, `off_track`, etc.)
 
-- A direct `.zip` file: `SACPID/logs/ppo/stage4/best_model.zip`
-- A directory with a `latest_model_path.txt` marker (written by the training script)
-- Any directory — the most recently modified `.zip` file is used
+**Aggregated across all episodes:**
+- Mean, std, and best value for each of the above
+- Completion rate
+- Best lap time
 
 ---
 
@@ -76,50 +85,29 @@ The `--checkpoint` flag accepts:
 
 ### JSON results file
 
-Written to `--output` (default `results/eval_<timestamp>.json`). Contains:
-
-```json
-{
-  "meta": { "checkpoint": "...", "model_type": "ppo", "episodes": 10, ... },
-  "episodes": [ { "dist_raced_m": 3620, "lap_completed": true, ... }, ... ],
-  "aggregated": {
-    "dist_raced_m":   { "mean": 3241, "std": 182, "best": 3620 },
-    "lap_time":       { "mean": 94.2, "std": 3.1,  "best": 89.7 },
-    "completion_rate": 0.7,
-    "best_lap_time":   89.7,
-    ...
-  }
-}
-```
+Written to `--output`. Contains run metadata, per-episode stats, and aggregated values.
 
 ### HTML report
 
-Written alongside the JSON file (same name, `.html` extension). Self-contained — no internet connection required. Can be:
-- Opened directly in any browser
-- Exported to PDF via browser print (`Ctrl+P` → Save as PDF)
-- Emailed as an attachment
+Written alongside the JSON file (`.html` extension). Fully self-contained:
+- No internet connection required
+- Open directly in any browser
+- Export to PDF via browser print (`Ctrl+P` → Save as PDF)
+- Safe to email as an attachment
+
+The report includes summary cards, five charts (distance, lap time, speed, track position, termination reasons), and a full per-episode breakdown table.
 
 ---
 
-## Live Dashboard
+## Live dashboard
 
-Add `--serve` to start a live dashboard that updates as each episode completes:
+Add `--serve` to watch the run as it progresses:
 
 ```bash
-python eval/evaluate.py \
-  --checkpoint SACPID/logs/ppo/stage4 \
-  --episodes 10 \
-  --serve
+python eval/evaluate.py --checkpoint /path/to/model.zip --episodes 10 --serve
 ```
 
-The browser opens automatically at `http://localhost:5001`. The dashboard shows:
-
-- Episode progress bar
-- Last episode summary (distance, lap time, speed, termination reason)
-- Distance raced per episode (bar chart, colour-coded by termination reason)
-- Mean speed per episode (line chart)
-
-Charts update every 3 seconds while the eval is running. When all episodes finish, the page shows a **"Run complete"** banner and slows polling to every 10 seconds.
+The browser opens automatically at `http://localhost:5001`. The dashboard updates every 3 seconds and shows a **"Run complete"** banner when all episodes finish.
 
 ### Stopping the live server
 
@@ -130,34 +118,59 @@ Live dashboard still running at http://localhost:5001
 Press Ctrl+C to stop the server.
 ```
 
-Press **Ctrl+C** in that terminal to shut it down. The HTML report is still available at the path printed in the console summary — you do not need the server to view it.
+Press **Ctrl+C** to stop it. The HTML report remains available at the path shown in the terminal summary and does not require the server.
 
 ---
 
-## Colour coding
+## Running with Docker
 
-All charts use a consistent colour scheme:
-
-| Colour | Termination reason |
-|---|---|
-| Green | `lap_complete` — successfully finished a lap |
-| Amber | `timeout` — episode reached the step limit |
-| Red | `off_track` / `crash` — car left the track boundary |
-| Grey | Other / unknown |
-
----
-
-## Example: full run with live server and verbose output
+Build the eval image:
 
 ```bash
-# Terminal 1 — start TORCS
-cd SACPID && ./autostart.sh 2
-
-# Terminal 2 — run eval
-python eval/evaluate.py \
-  --checkpoint SACPID/logs/ppo/stage4 \
-  --episodes 5 \
-  --stage 4 \
-  --serve \
-  --verbose
+docker build -f docker/Dockerfile.eval -t torcs-eval .
 ```
+
+Run (TORCS must be running on the host):
+
+```bash
+docker run --rm \
+  --network=host \
+  -v /path/to/checkpoints:/checkpoints \
+  -v /path/to/results:/app/results \
+  torcs-eval \
+  --checkpoint /checkpoints/best_model.zip \
+  --episodes 10
+```
+
+With live dashboard:
+
+```bash
+docker run --rm \
+  --network=host \
+  -v /path/to/checkpoints:/checkpoints \
+  -v /path/to/results:/app/results \
+  torcs-eval \
+  --checkpoint /checkpoints/best_model.zip \
+  --episodes 10 \
+  --serve \
+  --no-browser
+```
+
+Then open `http://localhost:5001` in your browser on the host.
+
+**Notes:**
+- `--network=host` gives the container access to TORCS UDP on `localhost:3001`
+- `--no-browser` is required — containers have no display
+- Results written to `/app/results` inside the container are accessible via the volume mount
+- The live server is accessible on the host at `http://localhost:5001` via `--network=host`
+
+---
+
+## Advanced flags
+
+These are hidden from `--help` but accepted for compatibility:
+
+| Flag | Default | Description |
+|---|---|---|
+| `--port` | `3001` | TORCS SCR UDP port |
+| `--policy-action-dim` | `3` | Action dimensions: `2` = [steer, accel], `3` = [steer, accel, brake] |
