@@ -3,7 +3,7 @@
 # Build:
 #   docker build -f docker/Dockerfile.eval -t torcs-eval .
 #
-# Run (TORCS must be running on the host):
+# Run (TORCS race must already be running on Corkscrew with scr_server1 selected):
 #   docker run --rm \
 #     --network=host \
 #     -v /path/to/checkpoints:/checkpoints \

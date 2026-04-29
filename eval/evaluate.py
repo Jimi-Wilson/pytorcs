@@ -2,7 +2,7 @@
 Evaluation engine for PPO checkpoints on TORCS.
 
 Prerequisites:
-  - TORCS must be running:  cd SACPID && ./autostart.sh 2
+  - TORCS race must be running on the Corkscrew track with scr_server1 selected.
   - Dependencies installed: pip install -r eval/requirements.txt
 
 Usage:
@@ -285,8 +285,10 @@ def main() -> None:
     srv = None
 
     # ── Laps loop ────────────────────────────────────────────────────────────
-    print(f"Target: {target_laps} completed laps  (max {max_attempts} attempts)  "
-          f"— TORCS must be running\n")
+    print(
+        f"Target: {target_laps} completed laps  (max {max_attempts} attempts)  "
+        f"— launch race on Corkscrew with scr_server1 selected\n"
+    )
 
     attempts: list[Any] = []
     laps_completed = 0

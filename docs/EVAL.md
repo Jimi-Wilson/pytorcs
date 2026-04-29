@@ -6,11 +6,8 @@ Runs a trained PPO checkpoint against TORCS, collects race statistics, writes a 
 
 ## Prerequisites
 
-1. **TORCS must be running** before the eval script starts — it connects over UDP and will hang if nothing is listening.
-
-   ```bash
-   cd SACPID && ./autostart.sh 2
-   ```
+1. **TORCS race must be running** before the eval script starts.
+   Launch the race on the **Corkscrew** track with **`scr_server1`** selected, otherwise eval will wait on UDP with no data.
 
 2. **Python dependencies:**
 

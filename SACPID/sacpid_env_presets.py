@@ -1,7 +1,7 @@
 """TORCS wrapper config presets for the four-stage PPO Corkscrew curriculum.
 
 The current training path is PPO-first. Stages are reward scaffolding for the
-Corkscrew track (``./autostart.sh 2``), with anti-swerve terms active early and
+Corkscrew track (race launched with ``scr_server1`` selected), with anti-swerve terms active early and
 without any Stage 1 centerline/center-track bonus.
 """
 

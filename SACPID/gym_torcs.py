@@ -94,7 +94,7 @@ class TorcsEnv:
         # else:
         #     os.system('torcs  -nofuel -nodamage -nolaptime &')
         # time.sleep(0.5)
-        # os.system('sh autostart.sh')
+        # Launch race manually in TORCS (Corkscrew + scr_server1 selected).
         # time.sleep(0.5)
 
         """
