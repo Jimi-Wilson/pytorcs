@@ -46,7 +46,6 @@ class TorcsClient:
                 response_str = response.decode()
 
                 if "***identified***" in response_str:
-                    print("Successfully connected to TORCS")
                     return
             except socket.timeout:
                 print(f"Waiting for TORCS response... ({attempt+1}/{max_retries})")
@@ -83,15 +82,6 @@ class TorcsClient:
         except socket.error as e:
             print(f"Failed to send action to TORCS: {e}")
 
-
-
-    def restart_race(self):
-        self.actions.meta = 1
-        try:
-            self.sock.sendto(self.actions.to_msg().encode(), (self.host, self.port))
-        finally:
-            self.actions.meta = 0
-        time.sleep(1)
 
 class Action:
     def __init__(self):
@@ -154,38 +144,3 @@ class Sensor:
                     setattr(self, name, int(val) if name == "gear" else val)
                 else:
                     setattr(self, name, numeric_values)
-
-
-# This works on windows, not sure about anything else, use IBM Granite to help figure it out
-# The cmd should be something like > something to launch torcs (torcs/wtorcs.exe) -r path/to/race/config -nofuel -nodamage -nolaptime -t 10000000000
-def launch_torcs() -> None:
-    match sys.platform:
-        case "linux":
-            os.system("pkill torcs")
-            time.sleep(1)
-            subprocess.Popen(
-                ["torcs", "-r", RACE_CONFIG, "-nofuel", "-nodamage", "-nolaptime", "-t", "10000000000"],
-                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
-            )
-            time.sleep(2)
-        case "win32":
-            print("Launching TORCS...")
-            os.system(f'taskkill /IM {TORCS_EXE} /F >nul 2>&1')
-            time.sleep(1)
-            full_exe_path = os.path.join(TORCS_PATH, TORCS_EXE)
-            cmd = [full_exe_path, "-nofuel", "-nodamage", "-nolaptime",
-                   "-r", RACE_CONFIG, "-t", "10000000000"]
-            subprocess.Popen(cmd, cwd=TORCS_PATH, shell=False,
-                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            time.sleep(2)
-        case "darwin":
-            os.system("pkill -f torcs 2>/dev/null")
-            time.sleep(1)
-            full_exe_path = os.path.join(TORCS_PATH, TORCS_EXE)
-            cmd = ["wine", full_exe_path, "-nofuel", "-nodamage", "-nolaptime",
-                   "-r", RACE_CONFIG, "-t", "10000000000"]
-            subprocess.Popen(cmd, cwd=TORCS_PATH, shell=False,
-                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            time.sleep(3)
-        case _:
-            raise Exception("Unsupported platform")

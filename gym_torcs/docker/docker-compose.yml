@@ -1,0 +1,18 @@
+name: torcs-cluster
+
+x-torcs-template: &torcs-template
+  build: .
+  shm_size: 512m
+  restart: unless-stopped
+  volumes:
+    - ./practise.xml:/root/.torcs/config/raceman/practise.xml
+
+services:
+  torcs_3001: { <<: *torcs-template, container_name: torcs_3001, ports: ["3001:3001/udp"] }
+  torcs_3002: { <<: *torcs-template, container_name: torcs_3002, ports: ["3002:3001/udp"] }
+  torcs_3003: { <<: *torcs-template, container_name: torcs_3003, ports: ["3003:3001/udp"] }
+  torcs_3004: { <<: *torcs-template, container_name: torcs_3004, ports: ["3004:3001/udp"] }
+  torcs_3005: { <<: *torcs-template, container_name: torcs_3005, ports: ["3005:3001/udp"] }
+  torcs_3006: { <<: *torcs-template, container_name: torcs_3006, ports: ["3006:3001/udp"] }
+  torcs_3007: { <<: *torcs-template, container_name: torcs_3007, ports: ["3007:3001/udp"] }
+  torcs_3008: { <<: *torcs-template, container_name: torcs_3008, ports: ["3008:3001/udp"] }
