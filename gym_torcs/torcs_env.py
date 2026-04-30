@@ -1,9 +1,12 @@
 import copy
 import math
+import time
+
 import gymnasium as gym
 import numpy as np
 
-from torcs_client import TorcsClient, launch_torcs
+from torcs_client import TorcsClient
+from utils import kill_torcs_instance
 
 class TorcsEnv(gym.Env):
     # Defining features, their size and scaling factors
@@ -104,8 +107,6 @@ class TorcsEnv(gym.Env):
         self.time_step += 1
         return observation, reward, self.is_terminal(), truncated, info
 
-    # Currently HARD RESET as soft doesn't seemly work on windows
-    # We relaunch torcs every epoch
     def reset(self, relaunch=False, seed=None, options=None, headless=True):
         super().reset(seed=seed)
         self.time_step = 0
@@ -113,7 +114,7 @@ class TorcsEnv(gym.Env):
         if self.client is not None and self.client.sock is not None:
             self.client.sock.close()
 
-        if headless: launch_torcs()
+        kill_torcs_instance(self.port)
         self.client = TorcsClient(self.port)
         self.initial_reset = False
 
@@ -168,8 +169,6 @@ class TorcsEnv(gym.Env):
     def process_sensors(self) -> np.ndarray:
         """
         Converts raw sensor values into a normalised numpy array.
-        :param sensors: Sensor object
-        :return: normalised sensor values
         """
         sensor_values = []
 
@@ -187,8 +186,10 @@ class TorcsEnv(gym.Env):
 
             sensor_values.append(array / scale)
 
-        return np.concatenate(sensor_values)
+        obs_array = np.concatenate(sensor_values)
+        obs_array = np.nan_to_num(obs_array, nan=0.0, posinf=1.0, neginf=-1.0)
 
+        return obs_array
 
 
     # Translated gear changing code from: https://computerscience.missouristate.edu/SAIL/_Files/Simulated-Car-Racing-Championship-Competition-Software-Manual.pdf
