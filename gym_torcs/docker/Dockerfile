@@ -46,6 +46,11 @@ WORKDIR /torcs/BUILD
 
 EXPOSE 3001/udp
 
+# Copying over car configuration files
+COPY ./car-config/scr_server.xml /torcs/BUILD/share/games/torcs/drivers/scr_server/scr_server.xml
+COPY ./car-config/0 /torcs/BUILD/share/games/torcs/drivers/scr_server/0
+COPY ./car-config/1 /torcs/BUILD/share/games/torcs/drivers/scr_server/1
+
 COPY ./entrypoint.sh /usr/local/bin/entrypoint.sh
 
 # Fix Linux permissions and line endings
