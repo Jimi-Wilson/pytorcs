@@ -1,7 +1,7 @@
 name: torcs-cluster
 
 x-torcs-template: &torcs-template
-  build: .
+  image: jimiwilson/torcs-server:latest
   shm_size: 512m
   restart: unless-stopped
   volumes:
