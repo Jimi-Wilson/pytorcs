@@ -10,6 +10,8 @@ services:
     environment:
       DISPLAY: ${DISPLAY:-}
       TORCS_PORT: "3001"
+      # Cap TORCS render loop (~60 FPS); SCR UDP pacing follows the sim tick. Set to 0 to disable.
+      TORCS_FPS_LIMIT: ${TORCS_FPS_LIMIT:-60}
       ALSOFT_DRIVERS: "null"
       ALUT_DRIVER: "null"
       LIBGL_DRI3_DISABLE: "1"

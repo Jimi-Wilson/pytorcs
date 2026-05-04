@@ -26,7 +26,21 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libxxf86vm-dev \
     libpng-dev \
     libvorbis-dev \
+    libx11-dev \
     && rm -rf /var/lib/apt/lists/*
+
+# OpenGL FPS cap for TORCS (Xvfb has no real vsync; uncapped loops waste CPU and jitter SCR timing).
+RUN set -eux; \
+    rm -rf /tmp/libstrangle; \
+    git clone --depth 1 https://github.com/milaq/libstrangle.git /tmp/libstrangle; \
+    cd /tmp/libstrangle && make; \
+    install -m755 strangle /usr/local/bin/strangle; \
+    install -m644 libstrangle.so /usr/local/lib/libstrangle.so; \
+    ldconfig; \
+    rm -rf /tmp/libstrangle
+
+ENV TORCS_FPS_LIMIT=60
+ENV vblank_mode=2
 
 RUN set -eux; \
     for attempt in 1 2 3 4 5; do \
