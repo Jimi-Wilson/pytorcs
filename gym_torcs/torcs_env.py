@@ -67,13 +67,22 @@ class TorcsEnv(gym.Env):
             dtype=np.float32
         )
 
+        # Debounced auto-shifter: early upshift (high-gear bias), very late downshift; gentle confirmation.
+        self._auto_gear_up_rpm = (4300, 4500, 4700, 4900, 5100, 999_999)
+        self._auto_gear_down_rpm = (0, 950, 1050, 1150, 1250, 1350)
+        self._auto_gear_confirm_steps = 7
+        self._gear_up_streak = 0
+        self._gear_dn_streak = 0
+
     def step(self, action):
         # Updating actions with new ones
         self.client.actions.steering = float(action[0])
         self.client.actions.accel = float(action[1])
 
         # Changing gears and applying ABS if needed
-        self.client.actions.gear = self.change_gear(self.client.sensors.gear, self.client.sensors.rpm)
+        self.client.actions.gear = self.change_gear(
+            int(self.client.sensors.gear), float(self.client.sensors.rpm)
+        )
 
         raw_brake = float(action[2])
         self.client.actions.brake = self.filter_abs(self.client.sensors.speedX, self.client.sensors.wheelSpinVel,
@@ -110,6 +119,8 @@ class TorcsEnv(gym.Env):
     def reset(self, relaunch=False, seed=None, options=None, headless=True):
         super().reset(seed=seed)
         self.time_step = 0
+        self._gear_up_streak = 0
+        self._gear_dn_streak = 0
 
         if self.client is not None and self.client.sock is not None:
             self.client.sock.close()
@@ -192,24 +203,38 @@ class TorcsEnv(gym.Env):
         return obs_array
 
 
-    # Translated gear changing code from: https://computerscience.missouristate.edu/SAIL/_Files/Simulated-Car-Racing-Championship-Competition-Software-Manual.pdf
-    @staticmethod
-    def change_gear(current_gear: int, rpm: float) -> int:
-        # Gear change thresholds
-        gear_up = [5000, 6000, 6000, 6500, 7000, 999999]
-        gear_down = [0, 2500, 3000, 3000, 3500, 3500]
+    # RPM auto-shifter (debounced): short-shift ups for high-gear bias; downshift only when heavily lugged.
+    def change_gear(self, current_gear: int, rpm: float) -> int:
+        n = self._auto_gear_confirm_steps
+        up = self._auto_gear_up_rpm
+        dn = self._auto_gear_down_rpm
 
         if current_gear < 1:
+            self._gear_up_streak = self._gear_dn_streak = 0
             return 1
 
-        # Changing gears based on RPM
-        if current_gear < 6 and rpm >= gear_up[current_gear - 1]:
-            return current_gear + 1
+        new_gear = current_gear
+        want_up = current_gear < 6 and rpm >= float(up[current_gear - 1])
+        want_dn = current_gear > 1 and rpm <= float(dn[current_gear - 1])
 
-        elif current_gear > 1 and rpm <= gear_down[current_gear - 1]:
-            return current_gear - 1
+        if want_up and not want_dn:
+            self._gear_dn_streak = 0
+            self._gear_up_streak += 1
+            if self._gear_up_streak >= n:
+                new_gear = current_gear + 1
+        elif want_dn and not want_up:
+            self._gear_up_streak = 0
+            self._gear_dn_streak += 1
+            if self._gear_dn_streak >= n:
+                new_gear = current_gear - 1
+        else:
+            self._gear_up_streak = 0
+            self._gear_dn_streak = 0
 
-        return current_gear
+        if new_gear != current_gear:
+            self._gear_up_streak = 0
+            self._gear_dn_streak = 0
+        return new_gear
 
     # Translated abs code from: https://computerscience.missouristate.edu/SAIL/_Files/Simulated-Car-Racing-Championship-Competition-Software-Manual.pdf
     @staticmethod

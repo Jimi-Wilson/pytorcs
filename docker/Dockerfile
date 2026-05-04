@@ -54,10 +54,12 @@ RUN python3 -m pip install --no-cache-dir -r /tmp/docker-requirements.txt
 
 COPY . /workspace
 
-# Mirror install_torcs.sh post-build steps exactly:
+# Mirror install_torcs/install_torcs.sh post-build steps:
 #   1. Disable img_server driver (causes player-selection crash)
 #   2. Install corkscrew track from upstream (not included in fmirus repo)
-#   3. Patch default race configs to start on corkscrew
+#   3. Patch default race configs to start on corkscrew (Docker convenience)
+#   4. Set SCR default car to car1-ow1 in scr_server.xml (matches native installer)
+#   5. Replace cars/car1-ow1/car1-ow1.rgb when install_torcs/assets/livery/car1-ow1.rgb exists
 
 RUN if [ -d "/usr/local/lib/torcs/drivers/img_server" ]; then \
       mv /usr/local/lib/torcs/drivers/img_server \
@@ -100,6 +102,32 @@ for cfg in sorted(cfg_dir.glob("*.xml")):
         cfg.write_text(patched, encoding="utf-8")
         print(f"[docker] patched default track → corkscrew in {cfg.name}")
 PY
+
+# SCR default car: car1-ow1 (same sed as install_torcs/install_torcs.sh set_scr_server_default_car)
+RUN set -eux; \
+    scr_server_xml="/usr/local/share/games/torcs/drivers/scr_server/scr_server.xml"; \
+    test -f "$scr_server_xml"; \
+    if grep -q '<attstr name="car name" val="car1-ow1"></attstr>' "$scr_server_xml" \
+        && ! grep -q '<attstr name="car name" val="car1-trb1"></attstr>' "$scr_server_xml"; then \
+      echo "[docker] SCR already uses car1-ow1"; \
+    else \
+      sed -E -i \
+        's#(<attstr name="car name" val=")car1-trb1("></attstr>)#\1car1-ow1\2#g' \
+        "$scr_server_xml"; \
+    fi; \
+    grep -q '<attstr name="car name" val="car1-ow1"></attstr>' "$scr_server_xml"
+
+RUN set -eux; \
+    livery_src="/workspace/install_torcs/assets/livery/car1-ow1.rgb"; \
+    car_dir="/usr/local/share/games/torcs/cars/car1-ow1"; \
+    if [ -f "$livery_src" ]; then \
+      test -d "$car_dir"; \
+      echo "[docker] Replacing stock car1-ow1.rgb with project livery"; \
+      rm -f "$car_dir/car1-ow1.rgb"; \
+      cp -a "$livery_src" "$car_dir/car1-ow1.rgb"; \
+    else \
+      echo "[docker] No custom livery at $livery_src — keeping stock car1-ow1.rgb"; \
+    fi
 
 RUN chmod +x /workspace/docker/entrypoint.sh
 
