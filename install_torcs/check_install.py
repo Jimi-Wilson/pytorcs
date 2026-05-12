@@ -65,10 +65,35 @@ def check_corkscrew():
     return False, "Corkscrew track not found in installed TORCS data directories."
 
 
+def check_scr_default_car():
+    for base in SEARCH_BASES:
+        scr_server_xml = base / "drivers" / "scr_server" / "scr_server.xml"
+        if not scr_server_xml.exists():
+            continue
+        try:
+            text = scr_server_xml.read_text(encoding="utf-8", errors="ignore")
+        except OSError as exc:
+            return False, f"Could not read {scr_server_xml}: {exc}"
+
+        has_target = '<attstr name="car name" val="car1-ow1"></attstr>' in text
+        has_old = '<attstr name="car name" val="car1-trb1"></attstr>' in text
+        if has_target and not has_old:
+            return True, f"SCR default car is car1-ow1 in {scr_server_xml}"
+        if has_target and has_old:
+            return (
+                False,
+                f"Mixed SCR car mapping in {scr_server_xml} (contains both car1-ow1 and car1-trb1)",
+            )
+        return False, f"SCR default car is not car1-ow1 in {scr_server_xml}"
+
+    return False, "scr_server.xml not found in standard TORCS data directories."
+
+
 def main() -> int:
     checks = [
         ("torcs-path", check_torcs_binary),
         ("scr-capable", check_scr_capability),
+        ("scr-default-car", check_scr_default_car),
         ("corkscrew-track", check_corkscrew),
     ]
     all_ok = True

@@ -3,6 +3,8 @@ set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ASSET_TRACK_DIR="$REPO_ROOT/install_torcs/assets/tracks/corkscrew"
+ASSET_LIVERY_DIR="$REPO_ROOT/install_torcs/assets/livery"
+LIVERY_RGB="$ASSET_LIVERY_DIR/car1-ow1.rgb"
 BUILD_DIR="/tmp/torcs-1.3.7-scr-build"
 SRC_REPO="https://github.com/fmirus/torcs-1.3.7.git"
 CORKSCREW_REPO_URL="https://github.com/jeremybennett/torcs.git"
@@ -159,6 +161,52 @@ copy_corkscrew_assets() {
   [[ -n "$tmp_track_root" ]] && rm -rf "$tmp_track_root"
 }
 
+set_scr_server_default_car() {
+  local target_data_dir
+  if [[ -d /usr/local/share/games/torcs ]]; then
+    target_data_dir="/usr/local/share/games/torcs"
+  elif [[ -d /usr/share/games/torcs ]]; then
+    target_data_dir="/usr/share/games/torcs"
+  else
+    die "Could not find TORCS data directory after install."
+  fi
+
+  local scr_server_xml="$target_data_dir/drivers/scr_server/scr_server.xml"
+  [[ -f "$scr_server_xml" ]] || die "Missing SCR config file: $scr_server_xml"
+
+  say "Setting SCR default cars to car1-ow1 in $scr_server_xml..."
+  sudo sed -E -i \
+    's#(<attstr name="car name" val=")car1-trb1("></attstr>)#\1car1-ow1\2#g' \
+    "$scr_server_xml"
+
+  if ! sudo grep -q '<attstr name="car name" val="car1-ow1"></attstr>' "$scr_server_xml"; then
+    die "Failed to set SCR default car mapping to car1-ow1 in $scr_server_xml"
+  fi
+}
+
+apply_custom_livery() {
+  if [[ ! -f "$LIVERY_RGB" ]]; then
+    say "Custom livery: $LIVERY_RGB not found — keeping stock car1-ow1.rgb"
+    return 0
+  fi
+
+  local target_data_dir
+  if [[ -d /usr/local/share/games/torcs ]]; then
+    target_data_dir="/usr/local/share/games/torcs"
+  elif [[ -d /usr/share/games/torcs ]]; then
+    target_data_dir="/usr/share/games/torcs"
+  else
+    die "Could not find TORCS data directory for livery install."
+  fi
+
+  local car_dir="$target_data_dir/cars/car1-ow1"
+  [[ -d "$car_dir" ]] || die "Expected car directory missing: $car_dir"
+
+  say "Replacing stock car1-ow1.rgb with project livery from $LIVERY_RGB..."
+  sudo rm -f "$car_dir/car1-ow1.rgb"
+  sudo cp -a "$LIVERY_RGB" "$car_dir/car1-ow1.rgb"
+}
+
 run_sanity_check() {
   say "Running sanity check: torcs -t 100000"
   set +e
@@ -187,6 +235,8 @@ main() {
   build_from_source
   disable_img_server_driver
   copy_corkscrew_assets
+  set_scr_server_default_car
+  apply_custom_livery
   run_sanity_check
   cat <<'EOF'
 [install_torcs] Success: TORCS 1.3.7 (SCR-patched) is installed.

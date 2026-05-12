@@ -9,6 +9,110 @@ import time
 import json
 
 
+# =============================================================================
+# ARCHIVED: OW1 / advanced auto-shifter (commented out — do not delete).
+# To re-enable: uncomment this block, add ``import math``, uncomment the matching
+# sections in ``TorcsEnv.__init__``, ``_debounced_gear_command``, ``reset``, and
+# ``step`` marked ``# --- OW1 SHIFTER ---`` below, and comment the active RPM block.
+# =============================================================================
+# import math
+#
+# # --- Automatic gear selection (SCR has no gear="auto"; 0 is neutral.) ---
+# # TORCS human ``drive_at`` (``src/drivers/human/human.cpp``) + OW1 XML ratios.
+# # Tuned for short-shift / traction; knobs: TORCS_OW1_DOWNHYST_MS, TORCS_GEAR_DEBOUNCE_STEPS, etc.
+# _CAR1_OW1_AUTO = {
+#     "redline_rpm": 18700.0,
+#     "rear_wheel_radius_m": 0.315,
+#     "final_drive": 4.5,
+#     "gear_ratios": (3.9, 2.9, 2.3, 1.87, 1.68, 1.54),
+# }
+# _CAR1_OW1_OVERALL = tuple(r * _CAR1_OW1_AUTO["final_drive"] for r in _CAR1_OW1_AUTO["gear_ratios"])
+# _TWO_PI_OVER_60 = (2.0 * math.pi) / 60.0
+# _OW1_UPSHIFT_CUSHIONS = (0.18, 0.26, 0.38, 0.48, 0.54, 0.58)
+#
+#
+# def _torcs_speed_scalar_m_s(state: dict) -> float:
+#     try:
+#         sx = float(state.get("speedX", 0.0))
+#         sy = float(state.get("speedY", 0.0))
+#         sz = float(state.get("speedZ", 0.0))
+#         return float(math.sqrt(sx * sx + sy * sy + sz * sz)) / 3.6
+#     except (TypeError, ValueError):
+#         return 0.0
+#
+#
+# def _ow1_rear_spin_trim(state: dict | None) -> float:
+#     if state is None:
+#         return 1.0
+#     try:
+#         w = state.get("wheelSpinVel")
+#         if not isinstance(w, (list, tuple)) or len(w) < 4:
+#             return 1.0
+#         rear = (float(w[2]) + float(w[3])) * 0.5
+#         front = (float(w[0]) + float(w[1])) * 0.5
+#         excess = rear - front
+#         if excess > 12.0:
+#             return 0.84
+#         if excess > 8.0:
+#             return 0.90
+#         if excess > 5.0:
+#             return 0.94
+#     except (TypeError, ValueError):
+#         pass
+#     return 1.0
+#
+#
+# def auto_gear_human_torcs_car1_ow1(
+#     current_gear: int, speed_m_s: float, state: dict | None = None
+# ) -> int:
+#     try:
+#         redline_frac = float(os.environ.get("TORCS_OW1_SHIFT_REDLINE_FRAC", "0.72"))
+#     except ValueError:
+#         redline_frac = 0.72
+#     redline_frac = float(np.clip(redline_frac, 0.45, 1.0))
+#     redline = _CAR1_OW1_AUTO["redline_rpm"] * redline_frac
+#     rw = _CAR1_OW1_AUTO["rear_wheel_radius_m"]
+#     ratios = _CAR1_OW1_OVERALL
+#     max_g = len(ratios)
+#     cushions = _OW1_UPSHIFT_CUSHIONS
+#     try:
+#         down_m = float(os.environ.get("TORCS_OW1_DOWNHYST_MS", "14.0"))
+#     except ValueError:
+#         down_m = 14.0
+#     spin_trim = _ow1_rear_spin_trim(state)
+#     g = int(current_gear)
+#     if g < 1:
+#         return 1
+#     if g > max_g:
+#         g = max_g
+#
+#     def upshift_threshold(for_gear: int, *, apply_spin_trim: bool) -> float:
+#         t = (
+#             redline * _TWO_PI_OVER_60 * rw * cushions[for_gear - 1] / ratios[for_gear - 1]
+#         )
+#         if apply_spin_trim:
+#             t *= spin_trim
+#         return t
+#
+#     if g < max_g and speed_m_s > upshift_threshold(g, apply_spin_trim=True):
+#         return g + 1
+#     if g > 1 and speed_m_s < upshift_threshold(g - 1, apply_spin_trim=False) - down_m:
+#         return g - 1
+#     return g
+#
+#
+# def auto_gear_legacy_rpm_speed(current_gear: int, rpm: float, speed_x: float) -> int:
+#     gear = int(current_gear)
+#     if gear < 1:
+#         gear = 1
+#     elif gear < 6 and rpm > 8000:
+#         gear += 1
+#     elif gear > 1 and (rpm < 4000 or (gear >= 4 and speed_x < 20.0)):
+#         gear -= 1
+#     return gear
+# =============================================================================
+
+
 class TorcsEnv:
     """Low-level SCR client. ``terminate_on_off_track`` controls whether ``track.min() < 0``
     ends the episode (SCR ``meta``). Disabling it keeps Python driving after excursions;
@@ -17,7 +121,10 @@ class TorcsEnv:
     On the **first** ``reset()``, you can optionally send an extra ``meta`` round-trip after the
     initial handshake (set ``TORCS_FIRST_RESET_META_SYNC=1``) so SCR race state matches later
     episode resets. **Default is off:** many SCR/TORCS builds loop on ``***restart***`` during
-    that sync; leave disabled unless you know you need it."""
+    that sync; leave disabled unless you know you need it.
+
+    Automatic gear uses the **original RPM shifter** (8000 / 4000). An archived **OW1** shifter
+    lives in comments at the top of this file and in ``# --- OW1 SHIFTER (archived) ---`` sections."""
 
     terminal_judge_start = 200  # Speed limit is applied after this step
     termination_limit_progress = 10  # [km/h], episode terminates if car is running slower than this limit
@@ -86,6 +193,22 @@ class TorcsEnv:
 
         self.initial_run = True
 
+        # --- OW1 SHIFTER (archived) — uncomment together with module + step + reset + method below:
+        # self._auto_shift_mode = os.environ.get("TORCS_AUTO_SHIFT", "human_car1_ow1").strip().lower()
+        # try:
+        #     self._gear_cmd_debounce_steps = max(1, int(os.environ.get("TORCS_GEAR_DEBOUNCE_STEPS", "18")))
+        # except ValueError:
+        #     self._gear_cmd_debounce_steps = 18
+        # self._gear_cmd_smoothed: int | None = None
+        # self._gear_cmd_pending: int | None = None
+        # self._gear_cmd_streak = 0
+        # self._last_sent_gear_cmd: int | None = None
+        # try:
+        #     self._shift_clutch_max = max(0, int(os.environ.get("TORCS_OW1_SHIFT_CLUTCH_STEPS", "5")))
+        # except ValueError:
+        #     self._shift_clutch_max = 5
+        # self._shift_clutch_n = 0
+
         ##print("launch torcs")
         # os.system('pkill torcs')
         # time.sleep(0.5)
@@ -134,6 +257,28 @@ class TorcsEnv:
             low = np.array([0., -np.inf, -np.inf, -np.inf, 0., -np.inf, 0., -np.inf, 0])
             self.observation_space = spaces.Box(low=low, high=high)
 
+    # --- OW1 SHIFTER (archived) ---
+    # def _debounced_gear_command(self, ideal_gear: int) -> int:
+    #     if self._gear_cmd_smoothed is None:
+    #         self._gear_cmd_smoothed = int(ideal_gear)
+    #         self._gear_cmd_pending = None
+    #         self._gear_cmd_streak = 0
+    #         return self._gear_cmd_smoothed
+    #     if int(ideal_gear) == self._gear_cmd_smoothed:
+    #         self._gear_cmd_pending = None
+    #         self._gear_cmd_streak = 0
+    #         return self._gear_cmd_smoothed
+    #     if self._gear_cmd_pending != int(ideal_gear):
+    #         self._gear_cmd_pending = int(ideal_gear)
+    #         self._gear_cmd_streak = 1
+    #     else:
+    #         self._gear_cmd_streak += 1
+    #     if self._gear_cmd_streak >= self._gear_cmd_debounce_steps:
+    #         self._gear_cmd_smoothed = int(ideal_gear)
+    #         self._gear_cmd_pending = None
+    #         self._gear_cmd_streak = 0
+    #     return self._gear_cmd_smoothed
+
     def step(self, u):
        #print("Step")
         # convert thisAction to the actual torcs actionstr
@@ -169,7 +314,7 @@ class TorcsEnv:
             action_torcs['accel'] = this_action['accel']
             action_torcs['brake'] = this_action['brake']
 
-        #  Automatic Gear Change (RPM-based, like a real racer)
+        #  Automatic Gear Change (RPM-based, like a real racer) — original simple shifter.
         if self.gear_change is True:
             action_torcs['gear'] = this_action['gear']
         else:
@@ -185,6 +330,33 @@ class TorcsEnv:
                 gear -= 1
 
             action_torcs['gear'] = gear
+
+        # --- OW1 SHIFTER (archived) — replace the ``else`` block above when re-enabling:
+        # if self.gear_change is True:
+        #     action_torcs["gear"] = this_action["gear"]
+        # else:
+        #     gear = int(client.S.d["gear"])
+        #     if self._auto_shift_mode in ("legacy", "rpm", "old"):
+        #         rpm = float(client.S.d["rpm"])
+        #         try:
+        #             speed_x = float(client.S.d.get("speedX", 0.0))
+        #         except (TypeError, ValueError):
+        #             speed_x = 0.0
+        #         action_torcs["gear"] = auto_gear_legacy_rpm_speed(gear, rpm, speed_x)
+        #     else:
+        #         speed = _torcs_speed_scalar_m_s(client.S.d)
+        #         ideal = auto_gear_human_torcs_car1_ow1(gear, speed, client.S.d)
+        #         cmd = self._debounced_gear_command(ideal)
+        #         prev = self._last_sent_gear_cmd
+        #         if prev is not None and cmd != prev and self._shift_clutch_max > 0:
+        #             self._shift_clutch_n = max(self._shift_clutch_n, self._shift_clutch_max)
+        #         self._last_sent_gear_cmd = cmd
+        #         action_torcs["gear"] = cmd
+        #         if self._shift_clutch_n > 0:
+        #             action_torcs["clutch"] = 0.26
+        #             self._shift_clutch_n -= 1
+        #         else:
+        #             action_torcs["clutch"] = 0.0
 
         # Save the privious full-obs from torcs for the reward calculation
         obs_pre = copy.deepcopy(client.S.d)
@@ -283,6 +455,13 @@ class TorcsEnv:
         # #endregion
 
         self.time_step = 0
+
+        # --- OW1 SHIFTER (archived) — uncomment with OW1 step/__init__/module:
+        # self._gear_cmd_smoothed = None
+        # self._gear_cmd_pending = None
+        # self._gear_cmd_streak = 0
+        # self._last_sent_gear_cmd = None
+        # self._shift_clutch_n = 0
 
         first_connect_reset = self.initial_reset is True
 

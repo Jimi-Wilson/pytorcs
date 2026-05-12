@@ -10,6 +10,7 @@ This guide gives GUI-first, working steps to run TORCS + SCR + Python tooling in
 - SCR UDP port mapping on `3001`
 - GUI mode support (required)
 - Docker audio disabled by design in TORCS (not an error)
+- TORCS is launched via [libstrangle](https://github.com/milaq/libstrangle) at **60 FPS** by default (`TORCS_FPS_LIMIT`, set to `0` to disable). Xvfb does not provide vsync, so this caps an otherwise unbounded render loop and keeps SCR timing steadier on fast CPUs.
 
 ## Common steps (all operating systems)
 
