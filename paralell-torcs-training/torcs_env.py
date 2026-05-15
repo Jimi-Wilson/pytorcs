@@ -32,7 +32,7 @@ class TorcsEnv(gym.Env):
         "z": (1, 1.0)
     }
 
-    def __init__(self, sensor_features=None, reward_function=None, truncate_limit=5000, port: int = 3001):
+    def __init__(self, sensor_features=None, reward_function=None, reset_fn=None, truncate_limit=5000, port: int = 3001):
         super().__init__()
 
         self.client = None
@@ -41,6 +41,7 @@ class TorcsEnv(gym.Env):
         self.initial_reset = True
         self.truncate_limit = truncate_limit
         self.reward_function = reward_function or self.calculate_reward
+        self.reset_fn = reset_fn or (lambda p: kill_torcs_instance(p))
 
         # Setting default features if none are provided
         if sensor_features is None:
@@ -51,11 +52,10 @@ class TorcsEnv(gym.Env):
         # --- ACTION SPACE ---
         # The agent controls 3 things: [Steering, Acceleration]
         # Steering: -1.0 (Right) to 1.0 (Left)
-        # Accel:     0.0 (No Gas) to 1.0 (Full Gas)
-        # Break:     0.0 (No Break) to 1.0 (Full Break)
+        # Accel:     -1.0 (Break) to 1.0 (Full Gas)
         self.action_space = gym.spaces.Box(
-            low=np.array([-1.0, 0.0, 0.0]),
-            high=np.array([1.0, 1.0, 1.0]),
+            low=np.array([-1.0, -1.0]),
+            high=np.array([1.0, 1.0]),
             dtype=np.float32
         )
 
@@ -76,17 +76,33 @@ class TorcsEnv(gym.Env):
 
     def step(self, action):
         # Updating actions with new ones
-        self.client.actions.steering = float(action[0])
-        self.client.actions.accel = float(action[1])
+        self.client.actions.steering = float(action[0]) * 0.5
+        pedal = float(action[1])
+
+
+        if pedal > 0:
+            self.client.actions.accel = pedal
+            raw_brake = 0.0
+        else:
+            self.client.actions.accel = 0.0
+            raw_brake = abs(pedal)
 
         # Changing gears and applying ABS if needed
         self.client.actions.gear = self.change_gear(
             int(self.client.sensors.gear), float(self.client.sensors.rpm)
         )
 
-        raw_brake = float(action[2])
-        self.client.actions.brake = self.filter_abs(self.client.sensors.speedX, self.client.sensors.wheelSpinVel,
-                                                    raw_brake)
+        self.client.actions.brake = self.filter_abs(
+            self.client.sensors.speedX,
+            self.client.sensors.wheelSpinVel,
+            raw_brake
+        )
+
+        if self.time_step < 30:
+            self.client.actions.accel = 1.0
+            self.client.actions.steering = 0.0
+            self.client.actions.brake = 0.0
+
 
         # Sending actions to torcs
         prev_sensors = copy.deepcopy(self.client.sensors)
@@ -102,9 +118,11 @@ class TorcsEnv(gym.Env):
         observation = self.process_sensors()
         reward = self.reward_function(prev_sensors, self.client.sensors)
 
-        truncated = self.time_step >= self.truncate_limit
+        # Sanitise reward to prevent NaN/Inf propagation
+        if not np.isfinite(reward):
+            reward = 0.0
 
-        if truncated: print(f"  ⏱ Truncated  dist={self.client.sensors.distRaced:.0f}m")
+        truncated = self.time_step >= self.truncate_limit
 
         info = {
             "lap_time": self.client.sensors.lastLapTime,
@@ -112,6 +130,17 @@ class TorcsEnv(gym.Env):
             "speed_x": self.client.sensors.speedX,
             "track_pos": self.client.sensors.trackPos,
         }
+
+        if truncated: print(f"  ⏱ Truncated  dist={info["dist_raced"]:.0f}m")
+        if self.is_lap_complete(): print(f"  ✓ LAP COMPLETE  time={info["lap_time"]:.2f}s")
+        if self.is_off_track(): print(f"  ✗ OFF TRACK  dist={info["dist_raced"]:.0f}m")
+
+
+        # Anti-Stall code
+        if self.time_step > 150 and self.client.sensors.speedX < 5.0:
+            print(" ⏱ Anti-Stall activated")
+            truncated = True
+            reward -= 120.0
 
         self.time_step += 1
         return observation, reward, self.is_terminal(), truncated, info
@@ -125,7 +154,7 @@ class TorcsEnv(gym.Env):
         if self.client is not None and self.client.sock is not None:
             self.client.sock.close()
 
-        kill_torcs_instance(self.port)
+        self.reset_fn(self.port)
         self.client = TorcsClient(self.port)
         self.initial_reset = False
 

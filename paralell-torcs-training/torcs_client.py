@@ -56,25 +56,51 @@ class TorcsClient:
         print(f"Failed to connect to TORCS after {max_retries} attempts.")
 
     def get_sensors(self):
-        while True:
-            try:
-                response, _ = self.sock.recvfrom(65536)
-                response_str = response.decode()
+        last_valid = None
 
-                if "***shutdown***" in response_str or "***restart***" in response_str:
+        self.sock.setblocking(False)
+        try:
+            while True:
+                try:
+                    response, _ = self.sock.recvfrom(65536)
+                    response_str = response.decode()
+
+                    if "***shutdown***" in response_str or "***restart***" in response_str:
+                        return None
+
+                    if response_str and "***identified***" not in response_str:
+                        last_valid = response_str
+
+                except BlockingIOError:
+                    break
+                except ConnectionResetError:
+                    print("Server closed the connection.")
                     return None
+        finally:
+            self.sock.setblocking(True)
+            self.sock.settimeout(1)
 
-                if not response_str or "***identified***" in response_str:
-                    continue
+        if last_valid is not None:
+            return last_valid
 
-                return response_str
+        try:
+            response, _ = self.sock.recvfrom(65536)
+            response_str = response.decode()
 
-            except socket.timeout:
-                print("No data received from server recently...")
+            if "***shutdown***" in response_str or "***restart***" in response_str:
                 return None
-            except ConnectionResetError:
-                print("Server closed the connection.")
+
+            if not response_str or "***identified***" in response_str:
                 return None
+
+            return response_str
+
+        except socket.timeout:
+            print("No data received from server recently...")
+            return None
+        except ConnectionResetError:
+            print("Server closed the connection.")
+            return None
 
     def send_action(self):
         try:
