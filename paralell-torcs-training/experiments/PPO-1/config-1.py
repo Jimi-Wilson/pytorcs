@@ -1,10 +1,10 @@
+import math
+
 from train_ppo import RunConfig
+
 
 # Config for the first 1M timesteps, for teaching the model basic car control.
 # The main difference is n_steps is 512 instead of 2048. So we updated the models weights more often to help speed up the stages of training.
-
-
-import math
 
 def corkscrew_reward(previous, current, current_action=None, previous_action=None, step_count=0) -> float:
     angle      = current.angle
@@ -84,6 +84,7 @@ def corkscrew_reward(previous, current, current_action=None, previous_action=Non
     )
 
 cfg = RunConfig(
+    run_name="learning-the-basics",
     reward_fn       = corkscrew_reward,
     total_timesteps = 1_000_000,
 
@@ -98,7 +99,6 @@ cfg = RunConfig(
         "frame_skip":      4,
     },
 
-    num_envs   = 8,
-    use_docker = True,
+    num_envs   = 4,
     base_port  = 3001,
 )

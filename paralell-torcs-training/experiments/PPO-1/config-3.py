@@ -1,5 +1,7 @@
 import math
+
 from train_ppo import RunConfig
+
 
 # Config-3: Fine-tuning stage to push below 113s.
 #
@@ -74,10 +76,11 @@ def corkscrew_reward_v3(previous, current) -> float:
 
 
 cfg = RunConfig(
+    run_name="refining-phase-2",
     reward_fn       = corkscrew_reward_v3,
     total_timesteps = 5_000_000,
 
-    algo_overrides = {
+    ppo_overrides={
         "learning_rate": 1e-4,
         "n_steps":       4096,
         "batch_size":    2048,
@@ -94,9 +97,6 @@ cfg = RunConfig(
         "frame_skip":      4,
     },
 
-    num_envs   = 8,
-    use_docker = True,
+    num_envs   = 4,
     base_port  = 3001,
-
-    resume_path = "/home/jw/Code/project/paralell-torcs-training/experiments/corkscrew_v2/best_models/best_lap_111.43s_step18984706"
 )

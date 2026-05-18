@@ -51,7 +51,10 @@ COPY ./car-config/scr_server.xml /torcs/BUILD/share/games/torcs/drivers/scr_serv
 COPY ./car-config/0 /torcs/BUILD/share/games/torcs/drivers/scr_server/0
 COPY ./car-config/1 /torcs/BUILD/share/games/torcs/drivers/scr_server/1
 
+COPY ./practise.xml /torcs/BUILD/share/games/torcs/config/raceman/practice.xml
+
 COPY ./entrypoint.sh /usr/local/bin/entrypoint.sh
+
 
 # Fix Linux permissions and line endings
 RUN chmod +x /usr/local/bin/entrypoint.sh && \

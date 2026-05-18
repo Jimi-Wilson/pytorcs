@@ -1,0 +1,25 @@
+name: torcs-visual
+
+services:
+  torcs_3001:
+    image: jimiwilson/torcs-server:latest
+    container_name: torcs_3001
+    shm_size: 512m
+    restart: "no"
+    environment:
+      - DISPLAY=${DISPLAY:-:0}
+    volumes:
+      - /tmp/.X11-unix:/tmp/.X11-unix:ro
+      - ./entrypoint.sh:/entrypoint.sh
+    devices:
+      - /dev/dri:/dev/dri
+    ports:
+      - "3001:3001/udp"
+    entrypoint: ["/entrypoint.sh"]
+
+networks:
+  default:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 192.168.224.0/24
