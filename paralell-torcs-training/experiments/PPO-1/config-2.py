@@ -1,6 +1,7 @@
+import math
+
 from train_ppo import RunConfig
 
-import math
 
 def corkscrew_reward(previous, current, current_action=None, previous_action=None, step_count=0) -> float:
     angle      = current.angle
@@ -81,6 +82,7 @@ def corkscrew_reward(previous, current, current_action=None, previous_action=Non
     
 
 cfg = RunConfig(
+    run_name="refining-phase-1",
     reward_fn       = corkscrew_reward,
     total_timesteps = 5_000_000,
 
@@ -95,7 +97,6 @@ cfg = RunConfig(
         "frame_skip":      4,
     },
 
-    num_envs   = 8,
-    use_docker = True,
+    num_envs   = 4,
     base_port  = 3001,
 )

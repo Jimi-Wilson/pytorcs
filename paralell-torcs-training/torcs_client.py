@@ -1,7 +1,5 @@
 import os
 import socket
-import subprocess
-import sys
 import time
 
 from dotenv import load_dotenv
@@ -26,7 +24,7 @@ class TorcsClient:
         self.connect()
 
 
-    def connect(self, max_retries=30):
+    def connect(self, max_retries=500):
         init_msg = f"{self.driver_id}(init {self.viewing_angles})"
 
         if self.sock is not None:
@@ -48,7 +46,7 @@ class TorcsClient:
                 if "***identified***" in response_str:
                     return
             except socket.timeout:
-                print(f"Waiting for TORCS response... ({attempt+1}/{max_retries})")
+                print(f"Waiting for TORCS response from {self.port}... ({attempt+1}/{max_retries})")
             except ConnectionResetError:
                 print(f"TORCS server not listening on {self.host}:{self.port} Please start TORCS.")
                 time.sleep(1)
