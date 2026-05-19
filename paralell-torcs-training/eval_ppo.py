@@ -17,8 +17,6 @@ from train_ppo import load_config, DEFAULT_ENV_KWARGS, RunConfig
 
 def evaluate(cfg: RunConfig, model_path: Path, episodes: int, visual: bool = False) -> None:
     env_kwargs = {**DEFAULT_ENV_KWARGS, **cfg.env_overrides}
-
-    # Spin up a single isolated TORCS container
     sys.path.insert(0, str(_HERE / "docker"))
     import orchestrate
 
@@ -35,7 +33,7 @@ def evaluate(cfg: RunConfig, model_path: Path, episodes: int, visual: bool = Fal
         env = FrameSkipWrapper(env, skip=skip)
 
     print(f"[INFO] Loading target model: {model_path.name}")
-    model = PPO.load(str(model_path))
+    model = PPO.load(str(model_path), device="cpu")
 
     if visual:
         print("\n[LAUNCH] Entering infinite visual loop. Press Ctrl+C to terminate.")

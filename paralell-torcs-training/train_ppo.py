@@ -1,7 +1,3 @@
-"""
-train_ppo.py  –  Core PPO training infrastructure for TORCS (Docker Native)
-"""
-
 import argparse
 import atexit
 import importlib.util
@@ -25,6 +21,7 @@ if str(_HERE) not in sys.path:
 from torcs_env import TorcsEnv
 from utils import get_timestamped_run_dir
 
+# Defining default PPO and Env KWARGS
 DEFAULT_PPO_KWARGS: dict = {
     "policy":        "MlpPolicy",
     "device": "cpu",
@@ -55,11 +52,21 @@ class RunConfig:
     total_timesteps: int            = 1_000_000
     ppo_overrides:   dict           = field(default_factory=dict)
     env_overrides:   dict           = field(default_factory=dict)
-    bc_kwargs:       Optional[dict] = None
     num_envs:        int            = 1
     base_port:       int            = 3001
     callbacks:       Optional[List] = None
 
+
+def load_config(config_path: str) -> tuple[RunConfig, Path]:
+    config_path = Path(config_path).resolve()
+    if str(config_path.parent) not in sys.path:
+        sys.path.insert(0, str(config_path.parent))
+    sys.modules.setdefault("train_ppo", sys.modules["__main__"])
+
+    spec = importlib.util.spec_from_file_location("experiment_config", config_path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.cfg, config_path.parent
 
 def build_default_callbacks(run_dir: Path, run_name: str) -> list:
     checkpoint_cb = CheckpointCallback(
@@ -88,9 +95,7 @@ def train(cfg: RunConfig, exp_dir: Path, resume_path: Optional[str] = None) -> N
 
     if resume_path:
         checkpoint = Path(resume_path).resolve()
-        run_dir = checkpoint.parents[1]
-    else:
-        run_dir = get_timestamped_run_dir(exp_dir, cfg.run_name)
+    run_dir = get_timestamped_run_dir(exp_dir, cfg.run_name)
 
     for d in ["checkpoints", "best_models", "tensorboard", "monitor"]:
         (run_dir / d).mkdir(parents=True, exist_ok=True)
@@ -113,9 +118,6 @@ def train(cfg: RunConfig, exp_dir: Path, resume_path: Optional[str] = None) -> N
         model = PPO.load(str(checkpoint), env=vec_env, **load_kwargs)
     else:
         model = PPO(env=vec_env, **ppo_kwargs)
-        if cfg.bc_kwargs:
-            from bc import pretrain_with_bc
-            model = pretrain_with_bc(model, cfg, exp_dir, run_dir, env_kwargs)
 
     model.learn(
         total_timesteps=cfg.total_timesteps,
@@ -125,17 +127,6 @@ def train(cfg: RunConfig, exp_dir: Path, resume_path: Optional[str] = None) -> N
     )
     model.save(str(run_dir / f"{cfg.run_name}_final"))
 
-
-def load_config(config_path: str) -> tuple[RunConfig, Path]:
-    config_path = Path(config_path).resolve()
-    if str(config_path.parent) not in sys.path:
-        sys.path.insert(0, str(config_path.parent))
-    sys.modules.setdefault("train_ppo", sys.modules["__main__"])
-
-    spec = importlib.util.spec_from_file_location("experiment_config", config_path)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module.cfg, config_path.parent
 
 
 if __name__ == "__main__":
