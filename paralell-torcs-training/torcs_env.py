@@ -1,17 +1,20 @@
 import copy
+import math
 import sys
 from pathlib import Path
+from typing import Any, Callable, Optional
 
 import gymnasium as gym
 import numpy as np
+from gymnasium.core import ActType
+
+from torcs_client import Sensor
 
 from torcs_client import TorcsClient
 
 _HERE = Path(__file__).parent.resolve()
 if str(_HERE / "docker") not in sys.path:
     sys.path.insert(0, str(_HERE / "docker"))
-
-# Direct import from your docker orchestration module
 from orchestrate import kill_torcs_on
 
 
@@ -28,8 +31,8 @@ class TorcsEnv(gym.Env):
         "lastLapTime": (1, 150.0),
         "opponents": (36, 200.0),
         "racePos": (1, 1.0),
-        "rpm": (1, 10000.0),
-        "speedX": (1, 300.0),
+        "rpm": (1, 18000.0),
+        "speedX": (1, 360.0),
         "speedY": (1, 300.0),
         "speedZ": (1, 300.0),
         "track": (19, 200.0),
@@ -38,7 +41,7 @@ class TorcsEnv(gym.Env):
         "z": (1, 1.0)
     }
 
-    def __init__(self, sensor_features=None, reward_function=None, truncate_limit=5000, port: int = 3001,
+    def __init__(self, reward_function: Callable[[Sensor, Sensor, np.ndarray, Optional[np.ndarray]], float], sensor_features=None, truncate_limit=5000, port: int = 3001,
                  skip_reset_kill: bool = False):
         super().__init__()
 
@@ -48,6 +51,7 @@ class TorcsEnv(gym.Env):
         self.truncate_limit = truncate_limit
         self.reward_function = reward_function
         self.sensor_features = sensor_features or ["speedX", "angle", "trackPos", "track"]
+        self.previous_action = None
 
         # Action space: [Steering (-1 to 1), Acceleration/Brake (-1 to 1)]
         self.action_space = gym.spaces.Box(
@@ -62,20 +66,29 @@ class TorcsEnv(gym.Env):
         )
 
         # Shift streaks configuration
-        self._auto_gear_up_rpm = (4300, 4500, 4700, 4900, 5100, 999_999)
-        self._auto_gear_down_rpm = (0, 950, 1050, 1150, 1250, 1350)
+
+        self._auto_gear_up_rpm = (11000, 12500, 13500, 14500, 16000, 999_999)
+        self._auto_gear_down_rpm = (0, 4000, 6500, 9000, 11500, 13500)
+
         self._auto_gear_confirm_steps = 7
         self._gear_up_streak = 0
         self._gear_dn_streak = 0
 
         self.skip_reset_kill = skip_reset_kill
 
-    def step(self, action):
-        self.client.actions.steering = float(action[0]) * 0.5
+
+    def step(self, action: ActType):
+
+        # Standardize the raw action
+        raw_steer = float(action[0])
+
+        # Apply cubic non-linear mapping
+        self.client.actions.steering = raw_steer ** 3
+
         pedal = float(action[1])
 
         if pedal > 0:
-            self.client.actions.accel = pedal
+            self.client.actions.accel = pedal ** 2
             raw_brake = 0.0
         else:
             self.client.actions.accel = 0.0
@@ -86,10 +99,11 @@ class TorcsEnv(gym.Env):
                                                     raw_brake)
 
         # Startup launch override
-        if self.time_step < 30:
+        if self.time_step < 100:
             self.client.actions.accel = 1.0
             self.client.actions.steering = 0.0
             self.client.actions.brake = 0.0
+            self.client.actions.gear = 1
 
         prev_sensors = copy.deepcopy(self.client.sensors)
         self.client.send_action()
@@ -100,7 +114,12 @@ class TorcsEnv(gym.Env):
 
         self.client.sensors.update(raw_sensors)
         observation = self.process_sensors()
-        reward = self.reward_function(prev_sensors, self.client.sensors)
+        reward = self.reward_function(
+            prev_sensors,
+            self.client.sensors,
+            action,
+            self.previous_action
+        )
 
         if not np.isfinite(reward):
             reward = 0.0
@@ -108,7 +127,9 @@ class TorcsEnv(gym.Env):
         truncated = self.time_step >= self.truncate_limit
         anti_stall = False
 
-        if self.time_step > 150 and self.client.sensors.speedX < 5.0:
+        velocity = math.sqrt((self.client.sensors.speedX ** 2) + (self.client.sensors.speedY ** 2) + (self.client.sensors.speedZ ** 2))
+
+        if self.time_step > 150 and velocity < 5.0:
             truncated = True
             reward -= 120.0
             anti_stall = True
@@ -124,10 +145,12 @@ class TorcsEnv(gym.Env):
             "TRUNCATED" if truncated else "ACTIVE"
         }
 
+        self.previous_action = copy.deepcopy(action)
+
         self.time_step += 1
         return observation, reward, self.is_terminal(), truncated, info
 
-    def reset(self, seed=None, options=None):
+    def reset(self, seed: int=None, options: dict[str, Any]=None) -> np.ndarray:
         super().reset(seed=seed)
         self.time_step = 0
         self._gear_up_streak = 0
@@ -148,14 +171,14 @@ class TorcsEnv(gym.Env):
 
         return self.process_sensors(), {}
 
-    def is_terminal(self):
+    def is_terminal(self) -> bool:
         return self.is_lap_complete() or self.is_off_track()
 
     def is_lap_complete(self) -> bool:
         lap_started = self.client.sensors.curLapTime > 1.0 or self.client.sensors.distRaced > 10.0
         return bool(lap_started and self.client.sensors.lastLapTime > 0.0 and self.client.sensors.curLapTime < 0.5)
 
-    def is_off_track(self):
+    def is_off_track(self) -> bool:
         return abs(self.client.sensors.trackPos) > 1.2
 
     def process_sensors(self) -> np.ndarray:
