@@ -10,6 +10,7 @@ services:
       - DISPLAY=${DISPLAY:-:0}
     volumes:
       - /tmp/.X11-unix:/tmp/.X11-unix:ro
+      - ~/.Xauthority:/tmp/.Xauthority:ro
       - ./entrypoint.sh:/entrypoint.sh
     devices:
       - /dev/dri:/dev/dri
