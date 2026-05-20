@@ -104,6 +104,9 @@ def train(cfg: RunConfig, exp_dir: Path, resume_path: Optional[str] = None) -> N
 
     sys.path.insert(0, str(_HERE / "docker"))
     import orchestrate
+    if cfg.num_envs > 32:
+        print(f"Warning: Number of environments set to 32 from {cfg.num_envs}.")
+        cfg.num_envs = 32
     orchestrate.launch(num_envs=cfg.num_envs, base_port=cfg.base_port)
     atexit.register(orchestrate.stop, num_envs=cfg.num_envs, base_port=cfg.base_port)
 

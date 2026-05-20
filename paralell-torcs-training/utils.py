@@ -10,7 +10,7 @@ from pathlib import Path
 
 
 def get_timestamped_run_dir(exp_dir: Path, run_name: str) -> Path:
-    timestamp = datetime.now().strftime("%Y_%m_%d_%H:%M:%S")
+    timestamp = datetime.now().strftime("%Y_%m_%d_%H-%M-%S")
     return exp_dir / f"{run_name}_{timestamp}"
 
 def kill_torcs_instance(port: int) -> None:

@@ -40,38 +40,7 @@ services:
   torcs_3030: { <<: *torcs-template, container_name: torcs_3030, ports: ["3030:3001/udp"] }
   torcs_3031: { <<: *torcs-template, container_name: torcs_3031, ports: ["3031:3001/udp"] }
   torcs_3032: { <<: *torcs-template, container_name: torcs_3032, ports: ["3032:3001/udp"] }
-  torcs_3033: { <<: *torcs-template, container_name: torcs_3033, ports: ["3033:3001/udp"] }
-  torcs_3034: { <<: *torcs-template, container_name: torcs_3034, ports: ["3034:3001/udp"] }
-  torcs_3035: { <<: *torcs-template, container_name: torcs_3035, ports: ["3035:3001/udp"] }
-  torcs_3036: { <<: *torcs-template, container_name: torcs_3036, ports: ["3036:3001/udp"] }
-  torcs_3037: { <<: *torcs-template, container_name: torcs_3037, ports: ["3037:3001/udp"] }
-  torcs_3038: { <<: *torcs-template, container_name: torcs_3038, ports: ["3038:3001/udp"] }
-  torcs_3039: { <<: *torcs-template, container_name: torcs_3039, ports: ["3039:3001/udp"] }
-  torcs_3040: { <<: *torcs-template, container_name: torcs_3040, ports: ["3040:3001/udp"] }
-  torcs_3041: { <<: *torcs-template, container_name: torcs_3041, ports: ["3041:3001/udp"] }
-  torcs_3042: { <<: *torcs-template, container_name: torcs_3042, ports: ["3042:3001/udp"] }
-  torcs_3043: { <<: *torcs-template, container_name: torcs_3043, ports: ["3043:3001/udp"] }
-  torcs_3044: { <<: *torcs-template, container_name: torcs_3044, ports: ["3044:3001/udp"] }
-  torcs_3045: { <<: *torcs-template, container_name: torcs_3045, ports: ["3045:3001/udp"] }
-  torcs_3046: { <<: *torcs-template, container_name: torcs_3046, ports: ["3046:3001/udp"] }
-  torcs_3047: { <<: *torcs-template, container_name: torcs_3047, ports: ["3047:3001/udp"] }
-  torcs_3048: { <<: *torcs-template, container_name: torcs_3048, ports: ["3048:3001/udp"] }
-  torcs_3049: { <<: *torcs-template, container_name: torcs_3049, ports: ["3049:3001/udp"] }
-  torcs_3050: { <<: *torcs-template, container_name: torcs_3050, ports: ["3050:3001/udp"] }
-  torcs_3051: { <<: *torcs-template, container_name: torcs_3051, ports: ["3051:3001/udp"] }
-  torcs_3052: { <<: *torcs-template, container_name: torcs_3052, ports: ["3052:3001/udp"] }
-  torcs_3053: { <<: *torcs-template, container_name: torcs_3053, ports: ["3053:3001/udp"] }
-  torcs_3054: { <<: *torcs-template, container_name: torcs_3054, ports: ["3054:3001/udp"] }
-  torcs_3055: { <<: *torcs-template, container_name: torcs_3055, ports: ["3055:3001/udp"] }
-  torcs_3056: { <<: *torcs-template, container_name: torcs_3056, ports: ["3056:3001/udp"] }
-  torcs_3057: { <<: *torcs-template, container_name: torcs_3057, ports: ["3057:3001/udp"] }
-  torcs_3058: { <<: *torcs-template, container_name: torcs_3058, ports: ["3058:3001/udp"] }
-  torcs_3059: { <<: *torcs-template, container_name: torcs_3059, ports: ["3059:3001/udp"] }
-  torcs_3060: { <<: *torcs-template, container_name: torcs_3060, ports: ["3060:3001/udp"] }
-  torcs_3061: { <<: *torcs-template, container_name: torcs_3061, ports: ["3061:3001/udp"] }
-  torcs_3062: { <<: *torcs-template, container_name: torcs_3062, ports: ["3062:3001/udp"] }
-  torcs_3063: { <<: *torcs-template, container_name: torcs_3063, ports: ["3063:3001/udp"] }
-  torcs_3064: { <<: *torcs-template, container_name: torcs_3064, ports: ["3064:3001/udp"] }
+
   
 networks:
   default:
