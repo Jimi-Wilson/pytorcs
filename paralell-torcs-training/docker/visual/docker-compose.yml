@@ -7,16 +7,23 @@ services:
     shm_size: 512m
     restart: "no"
     environment:
-      - DISPLAY=${DISPLAY:-:0}
+      - DISPLAY=${DISPLAY}
+      # Tell the container where to send PulseAudio streams
+      - PULSE_SERVER=unix:/tmp/pulse-socket
     volumes:
-      - /tmp/.X11-unix:/tmp/.X11-unix:ro
+      - /tmp/.X11-unix:/tmp/.X11-unix
       - ~/.Xauthority:/tmp/.Xauthority:ro
       - ./entrypoint.sh:/entrypoint.sh
+      # Map Fedora's host audio socket into the container
+      - /run/user/1000/pulse/native:/tmp/pulse-socket
     devices:
       - /dev/dri:/dev/dri
+    # Grant the container permission to use audio devices
+    group_add:
+      - audio
     ports:
       - "3001:3001/udp"
-    entrypoint: ["/entrypoint.sh"]
+    entrypoint: ["/torcs/BUILD/bin/torcs"]
 
 networks:
   default:
