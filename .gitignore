@@ -150,7 +150,7 @@ instance/
 .scrapy
 
 # Sphinx documentation
-docs/_build/
+torcs_single_instance_training/docs/_build/
 
 # PyBuilder
 .pybuilder/
@@ -251,4 +251,4 @@ results/eval_*.html
 results/lap_debug_*.jsonl
 
 # Runtime debug traces
-SACPID/.cursor/debug-*.log
+torcs_single_instance_training/SACPID/.cursor/debug-*.log

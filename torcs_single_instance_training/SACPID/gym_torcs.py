@@ -336,7 +336,7 @@ class TorcsEnv:
         #     action_torcs["gear"] = this_action["gear"]
         # else:
         #     gear = int(client.S.d["gear"])
-        #     if self._auto_shift_mode in ("legacy", "rpm", "old"):
+        #     if self._auto_shift_mode in ("legacy", "rpm", "torcs_single_instance_training"):
         #         rpm = float(client.S.d["rpm"])
         #         try:
         #             speed_x = float(client.S.d.get("speedX", 0.0))
