@@ -36,7 +36,7 @@ uv run python train.py --config path/to/config.py
 2. `--resume` - Path to the model to resume training from.
 
 ### Config File
-Training config files define the PPO models training parameters and the environment training parameters.
+Training config files define the model training parameters and the environment training parameters.
 
 To make a config file, take a look at the `example_config.py` file in the examples' directory.
 
