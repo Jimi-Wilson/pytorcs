@@ -1,12 +1,20 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
 [project]
-name = "paralell-torcs-training"
+name = "pytorcs"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
-    "dotenv>=0.9.9",
     "gymnasium>=1.2.3",
+    "numpy>=2.4.5",
+    "setuptools>=81.0.0",
     "stable-baselines3>=2.0",
     "tensorboard>=2.20.0",
 ]
+
+[tool.setuptools.packages.find]
+where = ["src"]
