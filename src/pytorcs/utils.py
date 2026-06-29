@@ -58,7 +58,7 @@ def make_env(port: int, config, env_kwargs: dict, monitor_dir: Path):
 
 def build_default_callbacks(run_dir: Path, run_name: str) -> list:
     checkpoint_cb = CheckpointCallback(
-        save_freq=50_000, save_path=str(run_dir / "checkpoints"), name_prefix=run_name
+        save_freq=250_000, save_path=str(run_dir / "checkpoints"), name_prefix=run_name
     )
     return [
         checkpoint_cb,

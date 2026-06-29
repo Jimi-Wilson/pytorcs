@@ -59,8 +59,8 @@ class TorcsEnv(gym.Env):
 
         # Shift streaks configuration
 
-        self._auto_gear_up_rpm = (6500, 7250, 8800, 9250, 10000, 999_999)
-        self._auto_gear_down_rpm = (0, 4000, 5000, 5500, 6000, 7000)
+        self._auto_gear_up_rpm = (10000, 12000, 14000, 15000, 16000, 999_999)
+        self._auto_gear_down_rpm = (0, 5000, 8000, 10000, 12000, 14000)
 
         self._auto_gear_confirm_steps = 7
         self._gear_up_streak = 0
